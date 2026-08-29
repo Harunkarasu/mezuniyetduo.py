@@ -16,5 +16,5 @@ Bazı soruları yapay zeka desteği sayesinde cevaplayabilmektedir.
 ///
 ///
 /// 
-Bu dökümantasyona Mezuniyet dersimize kadar(M10 L4) yeni özellikler eklenecektir ve kodlar da güncellenecektir.
+Bu dökümantasyona 18 Eylül 2026 Saat 18:30 a kadar yeni özellikler eklenecektir ve kodlar da güncellenecektir.
   
