@@ -4,10 +4,10 @@ Merhaba,ben Harun KARASU.Ben,Rüzgar Nihat YEŞİLYURT ile Kodland Mezuniyet pro
 ///
 ///
 Bizim projemiz,teknik servis yardım botu(discord).
-Sıkça sorulan sorularla alakalı 6 tuş bulunmaktadır.
+Sıkça sorulan sorularla alakalı 12 tuş bulunmaktadır.
 Bu tuşlara tıklayıp oradaki butonların üzerinde yazan bilgilendirme şekillerine göre yardım alınabilir.
 Yazdığınız sorular veri tabanı entegrasyonuyla veri tabanında tutulur.
-Sohbete "!hello" yazarsanız size kendi komutları hakkında bilgilendirme yapacaktır.
+Sohbete "!hello" yazarsanız size orada butonlar verecek ya da butonlar arasında bulunan "API ye sor"seçeneğine tıklayarak yapay zekaya soru gönderebilirsiniz.
 Sesli mesaj çevirmesi vardır.
 Open AI ve ChatGPT yardımlıdır.
 Sadece yöneticilerin kullanabildiği bir komutla toplam sorulan soru sayısını verir.
