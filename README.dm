@@ -1,23 +1,19 @@
-THE MEZUNİYET PROJECT
+THE ART OF MEZUNİYET PROJECT
 
-Merhaba arkadaşlar.Bu deposito,Harun KARASU ve Rüzgar Nihat YEŞİLYURT'un yaptığı discord teknik servis botudur.Bu proje,Kodland Pyhton Level 3 seviyesi mezuniyeti için yapılmıştır.
-///
+Merhaba.Ben Harun KARASU.Bu projeyi yakın arkadaşım Rüzgar Nihat YEŞİLYURT ile yaptık.Bu projemizde discord botu olarak bir teknik servis botu yaptık.Özellikler aşağıda bulunmaktadır.
 ///
 ///
 ÖZELLİKLER
 ///
-/// 
-1-Botumuzun adı "Everything İs Possible"dır.
-2-Botumuzda Ollama adında yerel yapay zeka kullanılmıitır.
-3-Botumuz 45 buton içermekte ve 3 sayfadan oluşmaktadır(Diğer Destekler butonuna tıklayarak diğer sayfalar açılır).
-4-Botumuz yapay zekaya soru gönderebilmektedir.
-5-Botumuzda veri tabanı entegrasyonu bulunmaktadır.
-6-Botumuzda Kodland Platform'da bulunan SSS kısmı eklenmiştir.
-7-Botumuza sorulan soru sayısı görüntülenebilir ve sadece yöneticiler bu komudu çalıştırabilir.
+1-Botumuzun adı "Everything İs Possible" olacaktır.Botumuz yapılırken OpenAI tarafından ve Ollama tarafından desteklenmiştir.
+2-Botumuza sorulan sorular veri tabanı entegrasyonuyla veri tabanında tutulur.
+3-Botumuz 45 e yakın komut bulundurmaktadır.
+4-Botumuzda sesli mesaj özelliği bulunmaktadır.
+5-Botumuzda yapay zekaya soru sorulabilir.
+6-Botumuzun açıklaması için "Bot Açıklaması" butonuna tıklayarak bütün buton işlevleri görüntülenebilir.
+7-Bot komutlerı 3 bölümden oluşmaktadır(Diğer Destekler butonu ile sayfalar görüntülenebilir).
+8-Botumuz toplamda 3428 satırdan oluşmaktadır.
 ///
 ///
-NOT:Botumuzda bulunan numara sahtedir ve link attığı site güvenlidir.
-///
-///
-Botumuza 18 Eylül saat 18:30'a kadar yeni özellikler eklenecektir.Arkadaşlarıma başarılar dilerim.
+Botumuz bitmiştir.Sunumumuz 18 Eylül saat 18:30'da Kodland Python Level 3 seviyesindeki mezuniyet dersimizde yapacağız.Arkadaşlarımın hepsine başarılar dilerim...
   
