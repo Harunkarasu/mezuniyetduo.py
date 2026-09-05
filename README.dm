@@ -12,7 +12,7 @@ Merhaba.Ben Harun KARASU.Bu projeyi yakın arkadaşım Rüzgar Nihat YEŞİLYURT
 5-Botumuzda yapay zekaya soru sorulabilir.
 6-Botumuzun açıklaması için "Bot Açıklaması" butonuna tıklayarak bütün buton işlevleri görüntülenebilir.
 7-Bot komutlerı 3 bölümden oluşmaktadır(Diğer Destekler butonu ile sayfalar görüntülenebilir).
-8-Botumuz toplamda 3428 satırdan oluşmaktadır.
+8-Botumuz toplamda 3342 satırdan oluşmaktadır.
 ///
 NOT:Botumuzdaki numara sahtedir ve site linki güvenlidir.
 ///
