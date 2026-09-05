@@ -217,11 +217,6 @@ async def sesi_yaziya_cevir(dosya_yolu):
         dosya_yolu
     )
 
-
-# ==================================================
-# DISCORD AYARLARI
-# ==================================================
-
 intents = discord.Intents.default()
 
 intents.message_content = True
@@ -233,20 +228,11 @@ bot = commands.Bot(
     help_command=None
 )
 
-
-
-
 yazili_soru_sayisi = 0
 sesli_soru_sayisi = 0
 ai_soru_sayisi = 0
 
-
-
-
 sesli_mesaj_bekleyenler = set()
-
-
-
 
 BOT_ACIKLAMASI = (
     "🛠️ **TEKNİK SERVİS ASİSTANI**\n\n"
@@ -412,9 +398,6 @@ BOT_ACIKLAMASI = (
     "veya sorununuzu doğrudan mesaj olarak yazın."
 )
 
-
-
-
 ANA_MENU_MESAJI = (
     "🛠️ **TEKNİK SERVİS ASİSTANI**\n\n"
     "Merhaba! 👋\n"
@@ -422,9 +405,6 @@ ANA_MENU_MESAJI = (
     "📖 **Bot Açıklaması** butonuna basarak botun tüm "
     "özelliklerinin ne işe yaradığını görebilirsiniz."
 )
-
-
-
 
 sorular = {
 
@@ -613,9 +593,6 @@ sorular = {
         "iletişime geçebilirsiniz."
 }
 
-
-
-
 yeni_cevaplar = {
 
     "telefon sorunları":
@@ -707,11 +684,6 @@ yeni_cevaplar = {
         "Web sitesi: " + TEKNIK_SERVIS_SITESI
 }
 
-
-# ==================================================
-# SORUYU TEMİZLE
-# ==================================================
-
 def soruyu_temizle(soru):
 
     if not isinstance(soru, str):
@@ -733,8 +705,6 @@ def soruyu_temizle(soru):
 
     return soru
 
-
-
 def hazir_cevap_bul(soru):
 
     soru = soruyu_temizle(
@@ -754,11 +724,6 @@ def hazir_cevap_bul(soru):
             return cevap
 
     return None
-
-
-# ==================================================
-# OLLAMA KONTROL
-# ==================================================
 
 def ollama_kontrol_sync():
 
@@ -856,9 +821,6 @@ async def ollama_kontrol():
     return await asyncio.to_thread(
         ollama_kontrol_sync
     )
-
-
-
 
 def yerel_ai_cevabi_sync(soru):
 
@@ -970,7 +932,6 @@ def yerel_ai_cevabi_sync(soru):
             "❌ Yerel yapay zekâya ulaşılamadı."
         )
 
-
 async def yerel_ai_cevabi(soru):
 
     global ai_soru_sayisi
@@ -982,15 +943,11 @@ async def yerel_ai_cevabi(soru):
         soru
     )
 
-
 async def yapay_zeka_cevabi(soru):
 
     return await yerel_ai_cevabi(
         soru
     )
-
-
-
 
 def mesaj_parcalari(
     mesaj,
@@ -1026,7 +983,6 @@ def mesaj_parcalari(
 
     return parcalar
 
-
 async def mesaj_gonder(
     channel,
     mesaj,
@@ -1043,9 +999,6 @@ async def mesaj_gonder(
             parca,
             **kwargs
         )
-
-
-
 
 async def aciklamayi_goster(
     interaction
@@ -1086,9 +1039,6 @@ async def aciklamayi_goster(
             + parca,
             ephemeral=True
         )
-
-
-
 
 class GeriBildirimModal(
     discord.ui.Modal
@@ -1169,9 +1119,6 @@ class GeriBildirimModal(
             "Görüşün bizim için çok değerli.",
             ephemeral=True
         )
-
-
-
 
 class AIsoruModal(
     discord.ui.Modal
@@ -1257,9 +1204,6 @@ class AIsoruModal(
                 ephemeral=True
             )
 
-
-
-
 class AnaMenu(
     discord.ui.View
 ):
@@ -1290,9 +1234,6 @@ class AnaMenu(
                 ephemeral=True
             )
 
-
-
-
     @discord.ui.button(
         label="Alışveriş",
         style=discord.ButtonStyle.primary,
@@ -1311,9 +1252,6 @@ class AnaMenu(
                 "nasıl alışveriş yapabilirim"
             ]
         )
-
-
-
 
     @discord.ui.button(
         label="Sipariş Durumu",
@@ -1795,9 +1733,6 @@ class AnaMenu(
             view=TeknikMenu2()
         )
 
-
-
-
 class TeknikMenu2(
     discord.ui.View
 ):
@@ -2066,8 +2001,6 @@ class TeknikMenu2(
             content=ANA_MENU_MESAJI,
             view=AnaMenu()
         )
-
-
 
 class TeknikMenu3(
     discord.ui.View
@@ -2365,9 +2298,6 @@ class TeknikMenu3(
             view=AnaMenu()
         )
 
-
-
-
 async def sesli_soruyu_isle(
     message,
     attachment
@@ -2495,9 +2425,6 @@ async def sesli_soruyu_isle(
                     hata
                 )
 
-
-
-
 @bot.event
 async def on_ready():
 
@@ -2563,9 +2490,6 @@ async def on_ready():
     print(
         "--------------------------------"
     )
-
-
-
 
 @bot.event
 async def on_message(message):
@@ -3255,10 +3179,6 @@ async def musterihizmetleri(ctx):
         ]
     )
 
-
-
-
-@yonetici.error
 async def yonetici_hata(
     ctx,
     hata
@@ -3375,9 +3295,6 @@ except Exception as hata:
         "❌ VERİTABANI BAŞLATMA HATASI:",
         hata
     )
-
-
-
 
 if not DISCORD_TOKEN:
 
