@@ -3,11 +3,16 @@ from discord.ext import commands
 
 import asyncio
 import requests
+import os
+import tempfile
+import json
 
+try:
+    from vosk import Model, KaldiRecognizer
+except ImportError:
+    Model = None
+    KaldiRecognizer = None
 
-# ==================================================
-# AYARLAR VE VERİTABANI
-# ==================================================
 
 from config import DISCORD_TOKEN
 from config import PREFIX
@@ -18,17 +23,13 @@ from database import soru_sayisi
 from database import kullanici_gecmisi
 
 
-# ==================================================
-# TEKNİK SERVİS BİLGİLERİ
-# ==================================================
+
 
 TEKNIK_SERVIS_SITESI = "https://www.trendyol.com/"
 TEKNIK_SERVIS_NUMARASI = "0850 540 600 025"
 
 
-# ==================================================
-# YEREL AI AYARLARI
-# ==================================================
+
 
 YEREL_AI_MODEL = "gemma3:1b"
 
@@ -36,12 +37,195 @@ OLLAMA_URL = "http://localhost:11434/api/generate"
 OLLAMA_TAGS_URL = "http://localhost:11434/api/tags"
 
 
+
+
+VOSK_MODEL_PATH = "vosk-model-small-tr-0.3"
+
+_vosk_model = None
+
+
+def vosk_model_yukle():
+
+    global _vosk_model
+
+    if _vosk_model is not None:
+        return _vosk_model
+
+    if Model is None:
+
+        print(
+            "❌ Vosk kurulu değil. `pip install vosk` çalıştırın."
+        )
+
+        return None
+
+    if not os.path.isdir(VOSK_MODEL_PATH):
+
+        print(
+            "❌ Vosk Türkçe model klasörü bulunamadı:",
+            VOSK_MODEL_PATH
+        )
+
+        return None
+
+    try:
+
+        _vosk_model = Model(
+            VOSK_MODEL_PATH
+        )
+
+        print(
+            "🎤 Vosk Türkçe STT modeli hazır."
+        )
+
+        return _vosk_model
+
+    except Exception as hata:
+
+        print(
+            "❌ Vosk model yükleme hatası:",
+            hata
+        )
+
+        return None
+
+
+def sesi_yaziya_cevir_sync(dosya_yolu):
+
+    model = vosk_model_yukle()
+
+    if model is None:
+        return ""
+
+    wav_yolu = dosya_yolu + ".wav"
+
+    try:
+
+        import subprocess
+
+        sonuc = subprocess.run(
+            [
+                "ffmpeg",
+                "-y",
+                "-i",
+                dosya_yolu,
+                "-ar",
+                "16000",
+                "-ac",
+                "1",
+                "-sample_fmt",
+                "s16",
+                wav_yolu
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True
+        )
+
+        if (
+            sonuc.returncode != 0
+            or not os.path.exists(wav_yolu)
+        ):
+
+            print(
+                "❌ FFmpeg ses dönüştürme hatası:",
+                sonuc.stderr[-1000:]
+            )
+
+            return ""
+
+        import wave
+
+        with wave.open(
+            wav_yolu,
+            "rb"
+        ) as ses:
+
+            if (
+                ses.getnchannels() != 1
+                or ses.getsampwidth() != 2
+            ):
+
+                print(
+                    "❌ Ses formatı uygun değil."
+                )
+
+                return ""
+
+            recognizer = KaldiRecognizer(
+                model,
+                ses.getframerate()
+            )
+
+            recognizer.SetWords(False)
+
+            while True:
+
+                veri = ses.readframes(4000)
+
+                if not veri:
+                    break
+
+                recognizer.AcceptWaveform(
+                    veri
+                )
+
+            sonuc_verisi = json.loads(
+                recognizer.FinalResult()
+            )
+
+            return str(
+                sonuc_verisi.get(
+                    "text",
+                    ""
+                )
+            ).strip()
+
+    except FileNotFoundError:
+
+        print(
+            "❌ FFmpeg bulunamadı. "
+            "FFmpeg'in PATH'e ekli olduğundan emin olun."
+        )
+
+        return ""
+
+    except Exception as hata:
+
+        print(
+            "❌ STT HATASI:",
+            hata
+        )
+
+        return ""
+
+    finally:
+
+        if os.path.exists(wav_yolu):
+
+            try:
+                os.remove(wav_yolu)
+
+            except Exception:
+                pass
+
+
+async def sesi_yaziya_cevir(dosya_yolu):
+
+    return await asyncio.to_thread(
+        sesi_yaziya_cevir_sync,
+        dosya_yolu
+    )
+
+
 # ==================================================
 # DISCORD AYARLARI
 # ==================================================
 
 intents = discord.Intents.default()
+
 intents.message_content = True
+
 
 bot = commands.Bot(
     command_prefix=PREFIX,
@@ -50,67 +234,197 @@ bot = commands.Bot(
 )
 
 
-# ==================================================
-# İSTATİSTİKLER
-# ==================================================
+
 
 yazili_soru_sayisi = 0
 sesli_soru_sayisi = 0
 ai_soru_sayisi = 0
 
 
-# ==================================================
-# BOT TANITIMI
-# ==================================================
+
+
+sesli_mesaj_bekleyenler = set()
+
+
+
 
 BOT_ACIKLAMASI = (
     "🛠️ **TEKNİK SERVİS ASİSTANI**\n\n"
 
-    "Merhaba! Ben teknik servis destek botuyum. 🤖\n\n"
+    "👋 **Merhaba!**\n"
+    "Ben teknik servis destek botuyum. "
+    "Alışveriş, sipariş, teknik sorunlar ve "
+    "yapay zekâ desteği gibi konularda size yardımcı olabilirim.\n\n"
 
-    "Size şu konularda yardımcı olabilirim:\n\n"
+    "📌 **BOT NASIL ÇALIŞIR?**\n\n"
 
-    "🛒 Alışveriş\n"
-    "📦 Sipariş durumu\n"
-    "❌ Sipariş iptali\n"
-    "⚠️ Hasarlı ürün\n"
-    "🔧 Teknik destek\n"
-    "🚚 Teslimat\n"
-    "↩️ İade\n"
-    "🛡️ Garanti\n"
-    "💳 Ödeme\n"
-    "🧾 Fatura\n"
-    "👤 Hesap\n"
-    "🔑 Şifre\n"
-    "💻 Bilgisayar\n"
-    "📱 Telefon ve tablet\n"
-    "🌐 İnternet\n"
-    "🖨️ Yazıcı\n"
-    "🔋 Batarya\n"
-    "💾 Depolama\n"
-    "🖥️ Ekran\n"
-    "⌨️ Klavye\n"
-    "🖱️ Mouse\n"
-    "🔌 Şarj\n"
-    "🔊 Ses\n"
-    "📷 Kamera\n"
-    "📶 Bluetooth\n"
-    "🔄 Güncelleme\n"
-    "🛡️ Güvenlik\n"
-    "🔐 Hesap güvenliği\n"
-    "📦 Teslim alma\n"
-    "🤖 Yerel yapay zekâ\n"
-    "📚 Soru geçmişi\n"
-    "📊 İstatistikler\n"
-    "⭐ Geri bildirim\n\n"
+    "💬 **Mesaj Gönderme:**\n"
+    "Sorununuzu doğrudan bu kanala yazabilirsiniz. "
+    "Bot önce hazır cevaplar arasında sorunuza uygun bir cevap arar. "
+    "Hazır cevap bulunamazsa yerel yapay zekâdan yardım alır.\n\n"
 
-    "Bir konu seçmek için aşağıdaki butonları kullanabilirsin."
+    "🛒 **Alışveriş:**\n"
+    "Web sitesinden nasıl alışveriş yapılabileceği ve "
+    "ürünlerin nasıl aranabileceği hakkında bilgi verir.\n\n"
+
+    "📦 **Sipariş Durumu:**\n"
+    "Verdiğiniz siparişin durumunu ve sipariş bilgilerinin "
+    "nereden kontrol edilebileceğini açıklar.\n\n"
+
+    "❌ **Sipariş İptali:**\n"
+    "Sipariş gönderilmeden önce iptal işleminin nasıl "
+    "yapılabileceği hakkında bilgi verir.\n\n"
+
+    "⚠️ **Hasarlı / Bozuk Ürün:**\n"
+    "Ürün hasarlı, kırık veya bozuk geldiyse "
+    "hangi adımların izlenebileceğini açıklar.\n\n"
+
+    "🔧 **Teknik Destek:**\n"
+    "Bilgisayar, telefon, tablet, internet ve diğer "
+    "teknik sorunlarınız için temel çözüm önerileri sunar.\n\n"
+
+    "🚚 **Teslimat:**\n"
+    "Kargo ve teslimat süreci hakkında genel bilgi verir "
+    "ve sipariş bilgilerinizden teslimat durumunu "
+    "nasıl kontrol edebileceğinizi açıklar.\n\n"
+
+    "↩️ **İade:**\n"
+    "Satın aldığınız bir ürünü iade etmek istediğinizde "
+    "hangi bölümden iade seçeneklerini kontrol "
+    "edebileceğinizi gösterir.\n\n"
+
+    "🛡️ **Garanti:**\n"
+    "Ürünlerin garanti bilgilerini nereden "
+    "kontrol edebileceğinizi açıklar.\n\n"
+
+    "💳 **Ödeme:**\n"
+    "Ödeme yöntemleri ve ödeme sırasında "
+    "yaşanabilecek sorunlar hakkında yardımcı olur.\n\n"
+
+    "🧾 **Fatura:**\n"
+    "Satın aldığınız ürünün faturasına "
+    "nereden ulaşabileceğinizi açıklar.\n\n"
+
+    "👤 **Hesap:**\n"
+    "Yeni hesap oluşturma ve hesapla ilgili "
+    "temel işlemler hakkında bilgi verir.\n\n"
+
+    "🔑 **Şifre:**\n"
+    "Şifrenizi unuttuğunuzda nasıl yenileyebileceğinizi "
+    "açıklar.\n\n"
+
+    "💻 **Bilgisayar:**\n"
+    "Bilgisayar açılmıyor, yavaş çalışıyor veya "
+    "başka bir teknik sorun yaşıyorsanız temel "
+    "kontroller konusunda yardımcı olur.\n\n"
+
+    "📱 **Telefon / Tablet:**\n"
+    "Telefon veya tablet açılmıyor, şarj olmuyor "
+    "ya da düzgün çalışmıyorsa temel çözüm önerileri sunar.\n\n"
+
+    "🌐 **İnternet / Wi-Fi:**\n"
+    "İnternet veya Wi-Fi bağlantısı çalışmıyorsa "
+    "yapabileceğiniz temel kontrolleri açıklar.\n\n"
+
+    "🖨️ **Yazıcı:**\n"
+    "Yazıcının çalışmaması, bağlantı problemi veya "
+    "kağıt sorunları gibi durumlarda temel öneriler verir.\n\n"
+
+    "🔋 **Batarya:**\n"
+    "Cihazınızın şarjının hızlı bitmesi gibi "
+    "batarya sorunlarında temel öneriler sunar.\n\n"
+
+    "💾 **Depolama:**\n"
+    "Cihazınızda depolama alanı dolduğunda "
+    "yer açmak için neler yapabileceğinizi açıklar.\n\n"
+
+    "🖥️ **Ekran:**\n"
+    "Ekranla ilgili temel sorunlarda "
+    "kontrol edilebilecek noktaları açıklar.\n\n"
+
+    "⌨️ **Klavye:**\n"
+    "Klavye çalışmıyorsa bağlantı ve USB gibi "
+    "temel kontrolleri yapmanıza yardımcı olur.\n\n"
+
+    "🖱️ **Mouse:**\n"
+    "Mouse çalışmadığında bağlantı, USB ve "
+    "pil gibi temel kontrolleri açıklar.\n\n"
+
+    "🔊 **Ses:**\n"
+    "Cihazdan ses gelmiyorsa ses seviyesi, "
+    "sessiz mod ve ses çıkışını kontrol etmenize yardımcı olur.\n\n"
+
+    "📷 **Kamera:**\n"
+    "Kamera çalışmıyorsa uygulama izinleri ve "
+    "kamera ayarlarını kontrol etmenizi önerir.\n\n"
+
+    "📶 **Bluetooth:**\n"
+    "Bluetooth bağlantısı kurulamadığında "
+    "bağlantıyı yeniden kurmak için temel adımları açıklar.\n\n"
+
+    "🔄 **Güncelleme:**\n"
+    "Cihaz veya uygulama güncellenmiyorsa "
+    "internet ve depolama gibi temel kontrolleri açıklar.\n\n"
+
+    "🛡️ **Güvenlik:**\n"
+    "Hesap ve cihaz güvenliği için güçlü parola kullanımı, "
+    "şüpheli bağlantılardan kaçınma gibi temel güvenlik "
+    "önerileri verir.\n\n"
+
+    "🔐 **Hesap Güvenliği:**\n"
+    "Hesabınızı daha güvenli kullanmanız için "
+    "güçlü parola ve iki aşamalı doğrulama gibi "
+    "güvenlik yöntemlerini açıklar.\n\n"
+
+    "🤖 **Yerel Yapay Zekâ:**\n"
+    "Hazır cevaplarda bulunmayan sorularınızı "
+    "bilgisayarınızda çalışan Ollama ve "
+    "Gemma modeli ile cevaplamaya çalışır.\n\n"
+
+    "🎤 **Sesli Mesaj:**\n"
+    "Sesli Mesaj butonuna bastıktan sonra "
+    "sesli sorunuzu Discord üzerinden gönderebilirsiniz. "
+    "Sesiniz yerel Vosk sistemi ile yazıya çevrilir "
+    "ve ortaya çıkan soru Ollama'ya gönderilir.\n\n"
+
+    "📚 **Soru Geçmişi:**\n"
+    "Daha önce sorduğunuz soruların son 5 tanesini "
+    "görüntülemenizi sağlar.\n\n"
+
+    "📊 **İstatistik:**\n"
+    "Botun kaç yazılı soru, kaç sesli soru ve "
+    "kaç yapay zekâ sorusu cevapladığını gösterir.\n\n"
+
+    "⭐ **Geri Bildirim:**\n"
+    "Botu 1 ile 5 arasında puanlayabilir ve "
+    "bot hakkındaki düşüncelerinizi yazabilirsiniz.\n\n"
+
+    "🔐 **Yönetici:**\n"
+    "Yalnızca sunucu yöneticilerinin kullanabildiği "
+    "bölümdür. Botun soru istatistiklerini gösterir.\n\n"
+
+    "📞 **Teknik Servis:**\n"
+    "Teknik servis telefon numarası ve web sitesi "
+    "gibi iletişim bilgilerini görüntüleyebilirsiniz.\n\n"
+
+    "💡 **Kullanım:**\n"
+    "Aşağıdaki butonlardan istediğiniz özelliği seçin "
+    "veya sorununuzu doğrudan mesaj olarak yazın."
 )
 
 
-# ==================================================
-# SIKÇA SORULAN SORULAR
-# ==================================================
+
+
+ANA_MENU_MESAJI = (
+    "🛠️ **TEKNİK SERVİS ASİSTANI**\n\n"
+    "Merhaba! 👋\n"
+    "Aşağıdaki butonlardan yapmak istediğiniz işlemi seçebilirsiniz.\n\n"
+    "📖 **Bot Açıklaması** butonuna basarak botun tüm "
+    "özelliklerinin ne işe yaradığını görebilirsiniz."
+)
+
+
+
 
 sorular = {
 
@@ -300,9 +614,7 @@ sorular = {
 }
 
 
-# ==================================================
-# YENİ 20 TEKNİK DESTEK CEVABI
-# ==================================================
+
 
 yeni_cevaplar = {
 
@@ -410,27 +722,33 @@ def soruyu_temizle(soru):
     noktalama = "?!.,;:()[]{}\"'`"
 
     for karakter in noktalama:
-        soru = soru.replace(karakter, "")
+        soru = soru.replace(
+            karakter,
+            ""
+        )
 
-    soru = " ".join(soru.split())
+    soru = " ".join(
+        soru.split()
+    )
 
     return soru
 
 
-# ==================================================
-# HAZIR CEVAP BUL
-# ==================================================
 
 def hazir_cevap_bul(soru):
 
-    soru = soruyu_temizle(soru)
+    soru = soruyu_temizle(
+        soru
+    )
 
     if not soru:
         return None
 
     for anahtar, cevap in sorular.items():
 
-        temiz_anahtar = soruyu_temizle(anahtar)
+        temiz_anahtar = soruyu_temizle(
+            anahtar
+        )
 
         if temiz_anahtar in soru:
             return cevap
@@ -472,7 +790,10 @@ def ollama_kontrol_sync():
         for model in modeller:
 
             isim = str(
-                model.get("name", "")
+                model.get(
+                    "name",
+                    ""
+                )
             )
 
             bulunan_modeller.append(
@@ -481,8 +802,11 @@ def ollama_kontrol_sync():
 
             if (
                 isim == YEREL_AI_MODEL
-                or isim.startswith(YEREL_AI_MODEL + ":")
+                or isim.startswith(
+                    YEREL_AI_MODEL + ":"
+                )
             ):
+
                 return True
 
         print(
@@ -494,20 +818,26 @@ def ollama_kontrol_sync():
 
             print(
                 "📦 Yüklü modeller:",
-                ", ".join(bulunan_modeller)
+                ", ".join(
+                    bulunan_modeller
+                )
             )
 
         return False
 
     except requests.exceptions.ConnectionError:
 
-        print("❌ Ollama çalışmıyor.")
+        print(
+            "❌ Ollama çalışmıyor."
+        )
 
         return False
 
     except requests.exceptions.Timeout:
 
-        print("⏳ Ollama kontrolü zaman aşımına uğradı.")
+        print(
+            "⏳ Ollama kontrolü zaman aşımına uğradı."
+        )
 
         return False
 
@@ -528,9 +858,7 @@ async def ollama_kontrol():
     )
 
 
-# ==================================================
-# YEREL AI
-# ==================================================
+
 
 def yerel_ai_cevabi_sync(soru):
 
@@ -600,7 +928,10 @@ def yerel_ai_cevabi_sync(soru):
             )
 
         cevap = str(
-            veri.get("response", "")
+            veri.get(
+                "response",
+                ""
+            )
         ).strip()
 
         if cevap == "":
@@ -659,11 +990,12 @@ async def yapay_zeka_cevabi(soru):
     )
 
 
-# ==================================================
-# MESAJI PARÇALA
-# ==================================================
 
-def mesaj_parcalari(mesaj, maksimum=1900):
+
+def mesaj_parcalari(
+    mesaj,
+    maksimum=1800
+):
 
     if not mesaj:
         return [""]
@@ -679,19 +1011,33 @@ def mesaj_parcalari(mesaj, maksimum=1900):
         if son_bosluk > 500:
             bolum = bolum[:son_bosluk]
 
-        parcalar.append(bolum)
+        parcalar.append(
+            bolum
+        )
 
-        mesaj = mesaj[len(bolum):].lstrip()
+        mesaj = mesaj[
+            len(bolum):
+        ].lstrip()
 
     if mesaj:
-        parcalar.append(mesaj)
+        parcalar.append(
+            mesaj
+        )
 
     return parcalar
 
 
-async def mesaj_gonder(channel, mesaj, **kwargs):
+async def mesaj_gonder(
+    channel,
+    mesaj,
+    **kwargs
+):
 
-    for parca in mesaj_parcalari(mesaj):
+    parcalar = mesaj_parcalari(
+        mesaj
+    )
+
+    for parca in parcalar:
 
         await channel.send(
             parca,
@@ -699,11 +1045,54 @@ async def mesaj_gonder(channel, mesaj, **kwargs):
         )
 
 
-# ==================================================
-# GERİ BİLDİRİM
-# ==================================================
 
-class GeriBildirimModal(discord.ui.Modal):
+
+async def aciklamayi_goster(
+    interaction
+):
+
+    parcalar = mesaj_parcalari(
+        BOT_ACIKLAMASI,
+        1800
+    )
+
+    toplam = len(parcalar)
+
+    ilk_mesaj = (
+        "📖 **Bot Açıklaması "
+        + str(1)
+        + "/"
+        + str(toplam)
+        + "**\n\n"
+        + parcalar[0]
+    )
+
+    await interaction.response.send_message(
+        ilk_mesaj,
+        ephemeral=True
+    )
+
+    for sayac, parca in enumerate(
+        parcalar[1:],
+        start=2
+    ):
+
+        await interaction.followup.send(
+            "📖 **Bot Açıklaması "
+            + str(sayac)
+            + "/"
+            + str(toplam)
+            + "**\n\n"
+            + parca,
+            ephemeral=True
+        )
+
+
+
+
+class GeriBildirimModal(
+    discord.ui.Modal
+):
 
     def __init__(self):
 
@@ -726,15 +1115,34 @@ class GeriBildirimModal(discord.ui.Modal):
             max_length=500
         )
 
-        self.add_item(self.puan)
-        self.add_item(self.yorum)
+        self.add_item(
+            self.puan
+        )
 
-    async def on_submit(self, interaction):
+        self.add_item(
+            self.yorum
+        )
 
-        puan = str(self.puan.value).strip()
-        yorum = str(self.yorum.value).strip()
+    async def on_submit(
+        self,
+        interaction
+    ):
 
-        if puan not in ["1", "2", "3", "4", "5"]:
+        puan = str(
+            self.puan.value
+        ).strip()
+
+        yorum = str(
+            self.yorum.value
+        ).strip()
+
+        if puan not in [
+            "1",
+            "2",
+            "3",
+            "4",
+            "5"
+        ]:
 
             await interaction.response.send_message(
                 "❌ Lütfen 1 ile 5 arasında bir puan girin.",
@@ -763,11 +1171,11 @@ class GeriBildirimModal(discord.ui.Modal):
         )
 
 
-# ==================================================
-# AI SORU MODALI
-# ==================================================
 
-class AIsoruModal(discord.ui.Modal):
+
+class AIsoruModal(
+    discord.ui.Modal
+):
 
     def __init__(self):
 
@@ -783,9 +1191,14 @@ class AIsoruModal(discord.ui.Modal):
             max_length=1000
         )
 
-        self.add_item(self.soru)
+        self.add_item(
+            self.soru
+        )
 
-    async def on_submit(self, interaction):
+    async def on_submit(
+        self,
+        interaction
+    ):
 
         soru = str(
             self.soru.value
@@ -845,11 +1258,11 @@ class AIsoruModal(discord.ui.Modal):
             )
 
 
-# ==================================================
-# ANA MENÜ
-# ==================================================
 
-class AnaMenu(discord.ui.View):
+
+class AnaMenu(
+    discord.ui.View
+):
 
     def __init__(self):
 
@@ -857,7 +1270,11 @@ class AnaMenu(discord.ui.View):
             timeout=600
         )
 
-    async def cevap_ver(self, interaction, cevap):
+    async def cevap_ver(
+        self,
+        interaction,
+        cevap
+    ):
 
         try:
 
@@ -874,9 +1291,7 @@ class AnaMenu(discord.ui.View):
             )
 
 
-    # ==================================================
-    # MEVCUT BUTONLAR
-    # ==================================================
+
 
     @discord.ui.button(
         label="Alışveriş",
@@ -884,12 +1299,20 @@ class AnaMenu(discord.ui.View):
         emoji="🛒",
         row=0
     )
-    async def alisveris(self, interaction, button):
+    async def alisveris(
+        self,
+        interaction,
+        button
+    ):
 
         await self.cevap_ver(
             interaction,
-            sorular["nasıl alışveriş yapabilirim"]
+            sorular[
+                "nasıl alışveriş yapabilirim"
+            ]
         )
+
+
 
 
     @discord.ui.button(
@@ -898,7 +1321,11 @@ class AnaMenu(discord.ui.View):
         emoji="📦",
         row=0
     )
-    async def siparis_durumu(self, interaction, button):
+    async def siparis_durumu(
+        self,
+        interaction,
+        button
+    ):
 
         await self.cevap_ver(
             interaction,
@@ -908,13 +1335,18 @@ class AnaMenu(discord.ui.View):
         )
 
 
+
     @discord.ui.button(
         label="Sipariş İptali",
         style=discord.ButtonStyle.danger,
         emoji="❌",
         row=0
     )
-    async def siparis_iptal(self, interaction, button):
+    async def siparis_iptal(
+        self,
+        interaction,
+        button
+    ):
 
         await self.cevap_ver(
             interaction,
@@ -924,13 +1356,19 @@ class AnaMenu(discord.ui.View):
         )
 
 
+
+
     @discord.ui.button(
         label="Hasarlı Ürün",
         style=discord.ButtonStyle.danger,
         emoji="⚠️",
         row=0
     )
-    async def hasarli(self, interaction, button):
+    async def hasarli(
+        self,
+        interaction,
+        button
+    ):
 
         await self.cevap_ver(
             interaction,
@@ -940,13 +1378,19 @@ class AnaMenu(discord.ui.View):
         )
 
 
+
+
     @discord.ui.button(
         label="Teknik Destek",
         style=discord.ButtonStyle.success,
         emoji="🔧",
         row=1
     )
-    async def teknik_destek(self, interaction, button):
+    async def teknik_destek(
+        self,
+        interaction,
+        button
+    ):
 
         await self.cevap_ver(
             interaction,
@@ -956,18 +1400,28 @@ class AnaMenu(discord.ui.View):
         )
 
 
+
+
     @discord.ui.button(
         label="Teslimat",
         style=discord.ButtonStyle.secondary,
         emoji="🚚",
         row=1
     )
-    async def teslimat(self, interaction, button):
+    async def teslimat(
+        self,
+        interaction,
+        button
+    ):
 
         await self.cevap_ver(
             interaction,
-            sorular["teslimat ne kadar sürer"]
+            sorular[
+                "teslimat ne kadar sürer"
+            ]
         )
+
+
 
 
     @discord.ui.button(
@@ -976,12 +1430,20 @@ class AnaMenu(discord.ui.View):
         emoji="↩️",
         row=1
     )
-    async def iade(self, interaction, button):
+    async def iade(
+        self,
+        interaction,
+        button
+    ):
 
         await self.cevap_ver(
             interaction,
-            sorular["iade nasıl yapılır"]
+            sorular[
+                "iade nasıl yapılır"
+            ]
         )
+
+
 
 
     @discord.ui.button(
@@ -990,12 +1452,20 @@ class AnaMenu(discord.ui.View):
         emoji="🛡️",
         row=1
     )
-    async def garanti(self, interaction, button):
+    async def garanti(
+        self,
+        interaction,
+        button
+    ):
 
         await self.cevap_ver(
             interaction,
-            sorular["garanti süresi ne kadar"]
+            sorular[
+                "garanti süresi ne kadar"
+            ]
         )
+
+
 
 
     @discord.ui.button(
@@ -1004,12 +1474,20 @@ class AnaMenu(discord.ui.View):
         emoji="💳",
         row=2
     )
-    async def odeme(self, interaction, button):
+    async def odeme(
+        self,
+        interaction,
+        button
+    ):
 
         await self.cevap_ver(
             interaction,
-            sorular["ödeme yöntemleri"]
+            sorular[
+                "ödeme yöntemleri"
+            ]
         )
+
+
 
 
     @discord.ui.button(
@@ -1018,12 +1496,20 @@ class AnaMenu(discord.ui.View):
         emoji="🧾",
         row=2
     )
-    async def fatura(self, interaction, button):
+    async def fatura(
+        self,
+        interaction,
+        button
+    ):
 
         await self.cevap_ver(
             interaction,
-            sorular["fatura nasıl alınır"]
+            sorular[
+                "fatura nasıl alınır"
+            ]
         )
+
+
 
 
     @discord.ui.button(
@@ -1032,7 +1518,11 @@ class AnaMenu(discord.ui.View):
         emoji="📚",
         row=2
     )
-    async def gecmis(self, interaction, button):
+    async def gecmis(
+        self,
+        interaction,
+        button
+    ):
 
         try:
 
@@ -1070,10 +1560,20 @@ class AnaMenu(discord.ui.View):
             start=1
         ):
 
-            if isinstance(soru, (tuple, list)):
-                metin = str(soru[0])
+            if isinstance(
+                soru,
+                (tuple, list)
+            ):
+
+                metin = str(
+                    soru[0]
+                )
+
             else:
-                metin = str(soru)
+
+                metin = str(
+                    soru
+                )
 
             mesaj += (
                 str(sayac)
@@ -1088,36 +1588,55 @@ class AnaMenu(discord.ui.View):
         )
 
 
+
+
     @discord.ui.button(
         label="İstatistik",
         style=discord.ButtonStyle.primary,
         emoji="📊",
         row=3
     )
-    async def istatistik(self, interaction, button):
+    async def istatistik(
+        self,
+        interaction,
+        button
+    ):
 
         try:
+
             toplam = soru_sayisi()
+
         except Exception:
+
             toplam = 0
 
         await interaction.response.send_message(
 
             "📊 **TEKNİK SERVİS İSTATİSTİKLERİ**\n\n"
             "💬 Yazılı sorular: "
-            + str(yazili_soru_sayisi)
+            + str(
+                yazili_soru_sayisi
+            )
             + "\n"
             "🎤 Sesli sorular: "
-            + str(sesli_soru_sayisi)
+            + str(
+                sesli_soru_sayisi
+            )
             + "\n"
             "🤖 AI soruları: "
-            + str(ai_soru_sayisi)
+            + str(
+                ai_soru_sayisi
+            )
             + "\n"
             "🗄️ Toplam kayıt: "
-            + str(toplam),
+            + str(
+                toplam
+            ),
 
             ephemeral=True
         )
+
+
 
 
     @discord.ui.button(
@@ -1126,11 +1645,17 @@ class AnaMenu(discord.ui.View):
         emoji="🤖",
         row=3
     )
-    async def ai(self, interaction, button):
+    async def ai(
+        self,
+        interaction,
+        button
+    ):
 
         await interaction.response.send_modal(
             AIsoruModal()
         )
+
+
 
 
     @discord.ui.button(
@@ -1139,11 +1664,17 @@ class AnaMenu(discord.ui.View):
         emoji="⭐",
         row=4
     )
-    async def geri_bildirim(self, interaction, button):
+    async def geri_bildirim(
+        self,
+        interaction,
+        button
+    ):
 
         await interaction.response.send_modal(
             GeriBildirimModal()
         )
+
+
 
 
     @discord.ui.button(
@@ -1152,7 +1683,11 @@ class AnaMenu(discord.ui.View):
         emoji="🔐",
         row=4
     )
-    async def yonetici_buton(self, interaction, button):
+    async def yonetici_buton(
+        self,
+        interaction,
+        button
+    ):
 
         if not interaction.user.guild_permissions.administrator:
 
@@ -1165,27 +1700,59 @@ class AnaMenu(discord.ui.View):
             return
 
         try:
+
             toplam = soru_sayisi()
+
         except Exception:
+
             toplam = 0
 
         await interaction.response.send_message(
 
             "🔐 **YÖNETİCİ PANELİ**\n\n"
             "📊 Toplam soru: "
-            + str(toplam)
+            + str(
+                toplam
+            )
             + "\n"
             "💬 Yazılı soru: "
-            + str(yazili_soru_sayisi)
+            + str(
+                yazili_soru_sayisi
+            )
             + "\n"
             "🎤 Sesli soru: "
-            + str(sesli_soru_sayisi)
+            + str(
+                sesli_soru_sayisi
+            )
             + "\n"
             "🤖 AI sorusu: "
-            + str(ai_soru_sayisi),
+            + str(
+                ai_soru_sayisi
+            ),
 
             ephemeral=True
         )
+
+
+
+
+    @discord.ui.button(
+        label="Bot Açıklaması",
+        style=discord.ButtonStyle.primary,
+        emoji="📖",
+        row=4
+    )
+    async def bot_aciklamasi(
+        self,
+        interaction,
+        button
+    ):
+
+        await aciklamayi_goster(
+            interaction
+        )
+
+
 
 
     @discord.ui.button(
@@ -1194,17 +1761,19 @@ class AnaMenu(discord.ui.View):
         emoji="🏠",
         row=4
     )
-    async def ana_menu(self, interaction, button):
+    async def ana_menu(
+        self,
+        interaction,
+        button
+    ):
 
         await interaction.response.edit_message(
-            content=BOT_ACIKLAMASI,
+            content=ANA_MENU_MESAJI,
             view=AnaMenu()
         )
 
 
-    # ==================================================
-    # YENİ DESTEKLER MENÜSÜ
-    # ==================================================
+
 
     @discord.ui.button(
         label="Diğer Destekler",
@@ -1212,7 +1781,11 @@ class AnaMenu(discord.ui.View):
         emoji="🛠️",
         row=4
     )
-    async def diger_destekler(self, interaction, button):
+    async def diger_destekler(
+        self,
+        interaction,
+        button
+    ):
 
         await interaction.response.edit_message(
             content=(
@@ -1223,11 +1796,11 @@ class AnaMenu(discord.ui.View):
         )
 
 
-# ==================================================
-# TEKNİK DESTEK SAYFA 2
-# ==================================================
 
-class TeknikMenu2(discord.ui.View):
+
+class TeknikMenu2(
+    discord.ui.View
+):
 
     def __init__(self):
 
@@ -1235,7 +1808,11 @@ class TeknikMenu2(discord.ui.View):
             timeout=600
         )
 
-    async def cevap_ver(self, interaction, cevap):
+    async def cevap_ver(
+        self,
+        interaction,
+        cevap
+    ):
 
         try:
 
@@ -1258,11 +1835,17 @@ class TeknikMenu2(discord.ui.View):
         emoji="📱",
         row=0
     )
-    async def telefon_sorunlari(self, interaction, button):
+    async def telefon_sorunlari(
+        self,
+        interaction,
+        button
+    ):
 
         await self.cevap_ver(
             interaction,
-            yeni_cevaplar["telefon sorunları"]
+            yeni_cevaplar[
+                "telefon sorunları"
+            ]
         )
 
 
@@ -1272,11 +1855,17 @@ class TeknikMenu2(discord.ui.View):
         emoji="💻",
         row=0
     )
-    async def bilgisayar_sorunlari(self, interaction, button):
+    async def bilgisayar_sorunlari(
+        self,
+        interaction,
+        button
+    ):
 
         await self.cevap_ver(
             interaction,
-            yeni_cevaplar["bilgisayar sorunları"]
+            yeni_cevaplar[
+                "bilgisayar sorunları"
+            ]
         )
 
 
@@ -1286,11 +1875,17 @@ class TeknikMenu2(discord.ui.View):
         emoji="📡",
         row=1
     )
-    async def wifi_sorunlari(self, interaction, button):
+    async def wifi_sorunlari(
+        self,
+        interaction,
+        button
+    ):
 
         await self.cevap_ver(
             interaction,
-            yeni_cevaplar["wifi sorunları"]
+            yeni_cevaplar[
+                "wifi sorunları"
+            ]
         )
 
 
@@ -1300,11 +1895,17 @@ class TeknikMenu2(discord.ui.View):
         emoji="🔌",
         row=1
     )
-    async def sarj_sorunlari(self, interaction, button):
+    async def sarj_sorunlari(
+        self,
+        interaction,
+        button
+    ):
 
         await self.cevap_ver(
             interaction,
-            yeni_cevaplar["şarj sorunları"]
+            yeni_cevaplar[
+                "şarj sorunları"
+            ]
         )
 
 
@@ -1314,11 +1915,17 @@ class TeknikMenu2(discord.ui.View):
         emoji="🔋",
         row=2
     )
-    async def pil_sorunlari(self, interaction, button):
+    async def pil_sorunlari(
+        self,
+        interaction,
+        button
+    ):
 
         await self.cevap_ver(
             interaction,
-            yeni_cevaplar["pil batarya"]
+            yeni_cevaplar[
+                "pil batarya"
+            ]
         )
 
 
@@ -1328,11 +1935,17 @@ class TeknikMenu2(discord.ui.View):
         emoji="🖥️",
         row=2
     )
-    async def ekran_sorunlari(self, interaction, button):
+    async def ekran_sorunlari(
+        self,
+        interaction,
+        button
+    ):
 
         await self.cevap_ver(
             interaction,
-            yeni_cevaplar["ekran sorunları"]
+            yeni_cevaplar[
+                "ekran sorunları"
+            ]
         )
 
 
@@ -1342,11 +1955,17 @@ class TeknikMenu2(discord.ui.View):
         emoji="⌨️",
         row=3
     )
-    async def klavye_sorunlari(self, interaction, button):
+    async def klavye_sorunlari(
+        self,
+        interaction,
+        button
+    ):
 
         await self.cevap_ver(
             interaction,
-            yeni_cevaplar["klavye sorunları"]
+            yeni_cevaplar[
+                "klavye sorunları"
+            ]
         )
 
 
@@ -1356,11 +1975,17 @@ class TeknikMenu2(discord.ui.View):
         emoji="🖱️",
         row=3
     )
-    async def mouse_sorunlari(self, interaction, button):
+    async def mouse_sorunlari(
+        self,
+        interaction,
+        button
+    ):
 
         await self.cevap_ver(
             interaction,
-            yeni_cevaplar["mouse sorunları"]
+            yeni_cevaplar[
+                "mouse sorunları"
+            ]
         )
 
 
@@ -1370,11 +1995,17 @@ class TeknikMenu2(discord.ui.View):
         emoji="🖨️",
         row=4
     )
-    async def yazici_sorunlari(self, interaction, button):
+    async def yazici_sorunlari(
+        self,
+        interaction,
+        button
+    ):
 
         await self.cevap_ver(
             interaction,
-            yeni_cevaplar["yazıcı sorunları"]
+            yeni_cevaplar[
+                "yazıcı sorunları"
+            ]
         )
 
 
@@ -1384,11 +2015,17 @@ class TeknikMenu2(discord.ui.View):
         emoji="💾",
         row=4
     )
-    async def depolama_sorunlari(self, interaction, button):
+    async def depolama_sorunlari(
+        self,
+        interaction,
+        button
+    ):
 
         await self.cevap_ver(
             interaction,
-            yeni_cevaplar["depolama sorunları"]
+            yeni_cevaplar[
+                "depolama sorunları"
+            ]
         )
 
 
@@ -1398,7 +2035,11 @@ class TeknikMenu2(discord.ui.View):
         emoji="➡️",
         row=4
     )
-    async def sonraki_sayfa(self, interaction, button):
+    async def sonraki_sayfa(
+        self,
+        interaction,
+        button
+    ):
 
         await interaction.response.edit_message(
             content=(
@@ -1415,19 +2056,22 @@ class TeknikMenu2(discord.ui.View):
         emoji="🏠",
         row=4
     )
-    async def ana_menu(self, interaction, button):
+    async def ana_menu(
+        self,
+        interaction,
+        button
+    ):
 
         await interaction.response.edit_message(
-            content=BOT_ACIKLAMASI,
+            content=ANA_MENU_MESAJI,
             view=AnaMenu()
         )
 
 
-# ==================================================
-# TEKNİK DESTEK SAYFA 3
-# ==================================================
 
-class TeknikMenu3(discord.ui.View):
+class TeknikMenu3(
+    discord.ui.View
+):
 
     def __init__(self):
 
@@ -1435,7 +2079,11 @@ class TeknikMenu3(discord.ui.View):
             timeout=600
         )
 
-    async def cevap_ver(self, interaction, cevap):
+    async def cevap_ver(
+        self,
+        interaction,
+        cevap
+    ):
 
         try:
 
@@ -1458,11 +2106,17 @@ class TeknikMenu3(discord.ui.View):
         emoji="🔊",
         row=0
     )
-    async def ses_sorunlari(self, interaction, button):
+    async def ses_sorunlari(
+        self,
+        interaction,
+        button
+    ):
 
         await self.cevap_ver(
             interaction,
-            yeni_cevaplar["ses sorunları"]
+            yeni_cevaplar[
+                "ses sorunları"
+            ]
         )
 
 
@@ -1472,11 +2126,17 @@ class TeknikMenu3(discord.ui.View):
         emoji="📷",
         row=0
     )
-    async def kamera_sorunlari(self, interaction, button):
+    async def kamera_sorunlari(
+        self,
+        interaction,
+        button
+    ):
 
         await self.cevap_ver(
             interaction,
-            yeni_cevaplar["kamera sorunları"]
+            yeni_cevaplar[
+                "kamera sorunları"
+            ]
         )
 
 
@@ -1486,11 +2146,17 @@ class TeknikMenu3(discord.ui.View):
         emoji="📶",
         row=1
     )
-    async def bluetooth_sorunlari(self, interaction, button):
+    async def bluetooth_sorunlari(
+        self,
+        interaction,
+        button
+    ):
 
         await self.cevap_ver(
             interaction,
-            yeni_cevaplar["bluetooth sorunları"]
+            yeni_cevaplar[
+                "bluetooth sorunları"
+            ]
         )
 
 
@@ -1500,11 +2166,17 @@ class TeknikMenu3(discord.ui.View):
         emoji="🔄",
         row=1
     )
-    async def guncelleme_sorunlari(self, interaction, button):
+    async def guncelleme_sorunlari(
+        self,
+        interaction,
+        button
+    ):
 
         await self.cevap_ver(
             interaction,
-            yeni_cevaplar["güncelleme sorunları"]
+            yeni_cevaplar[
+                "güncelleme sorunları"
+            ]
         )
 
 
@@ -1514,11 +2186,17 @@ class TeknikMenu3(discord.ui.View):
         emoji="🛡️",
         row=2
     )
-    async def guvenlik_sorunlari(self, interaction, button):
+    async def guvenlik_sorunlari(
+        self,
+        interaction,
+        button
+    ):
 
         await self.cevap_ver(
             interaction,
-            yeni_cevaplar["güvenlik sorunları"]
+            yeni_cevaplar[
+                "güvenlik sorunları"
+            ]
         )
 
 
@@ -1528,11 +2206,17 @@ class TeknikMenu3(discord.ui.View):
         emoji="🔐",
         row=2
     )
-    async def hesap_guvenligi(self, interaction, button):
+    async def hesap_guvenligi(
+        self,
+        interaction,
+        button
+    ):
 
         await self.cevap_ver(
             interaction,
-            yeni_cevaplar["hesap güvenliği"]
+            yeni_cevaplar[
+                "hesap güvenliği"
+            ]
         )
 
 
@@ -1542,11 +2226,17 @@ class TeknikMenu3(discord.ui.View):
         emoji="📦",
         row=3
     )
-    async def teslim_alma(self, interaction, button):
+    async def teslim_alma(
+        self,
+        interaction,
+        button
+    ):
 
         await self.cevap_ver(
             interaction,
-            yeni_cevaplar["teslim alma"]
+            yeni_cevaplar[
+                "teslim alma"
+            ]
         )
 
 
@@ -1556,11 +2246,44 @@ class TeknikMenu3(discord.ui.View):
         emoji="🧾",
         row=3
     )
-    async def fatura_sorunu(self, interaction, button):
+    async def fatura_sorunu(
+        self,
+        interaction,
+        button
+    ):
 
         await self.cevap_ver(
             interaction,
-            yeni_cevaplar["fatura sorunları"]
+            yeni_cevaplar[
+                "fatura sorunları"
+            ]
+        )
+
+
+    @discord.ui.button(
+        label="Sesli Mesaj",
+        style=discord.ButtonStyle.success,
+        emoji="🎤",
+        row=3
+    )
+    async def sesli_mesaj(
+        self,
+        interaction,
+        button
+    ):
+
+        sesli_mesaj_bekleyenler.add(
+            interaction.user.id
+        )
+
+        await interaction.response.send_message(
+            "🎤 **Sesli soru modu açıldı!**\n\n"
+            "Şimdi buraya bir Discord sesli mesajı gönder.\n\n"
+            "🧠 Ses, internet API'si kullanılmadan yerel Vosk "
+            "ile yazıya çevrilecek.\n"
+            "🤖 Ortaya çıkan metin Ollama'ya gönderilecek.\n\n"
+            "⏳ Hazır olduğunda sesli mesajını gönder!",
+            ephemeral=True
         )
 
 
@@ -1570,11 +2293,17 @@ class TeknikMenu3(discord.ui.View):
         emoji="💳",
         row=4
     )
-    async def odeme_sorunu(self, interaction, button):
+    async def odeme_sorunu(
+        self,
+        interaction,
+        button
+    ):
 
         await self.cevap_ver(
             interaction,
-            yeni_cevaplar["ödeme sorunları"]
+            yeni_cevaplar[
+                "ödeme sorunları"
+            ]
         )
 
 
@@ -1584,11 +2313,17 @@ class TeknikMenu3(discord.ui.View):
         emoji="📞",
         row=4
     )
-    async def musteri_hizmetleri(self, interaction, button):
+    async def musteri_hizmetleri(
+        self,
+        interaction,
+        button
+    ):
 
         await self.cevap_ver(
             interaction,
-            yeni_cevaplar["müşteri hizmetleri"]
+            yeni_cevaplar[
+                "müşteri hizmetleri"
+            ]
         )
 
 
@@ -1598,7 +2333,11 @@ class TeknikMenu3(discord.ui.View):
         emoji="⬅️",
         row=4
     )
-    async def onceki_sayfa(self, interaction, button):
+    async def onceki_sayfa(
+        self,
+        interaction,
+        button
+    ):
 
         await interaction.response.edit_message(
             content=(
@@ -1615,25 +2354,170 @@ class TeknikMenu3(discord.ui.View):
         emoji="🏠",
         row=4
     )
-    async def ana_menu(self, interaction, button):
+    async def ana_menu(
+        self,
+        interaction,
+        button
+    ):
 
         await interaction.response.edit_message(
-            content=BOT_ACIKLAMASI,
+            content=ANA_MENU_MESAJI,
             view=AnaMenu()
         )
 
 
-# ==================================================
-# BOT HAZIR
-# ==================================================
+
+
+async def sesli_soruyu_isle(
+    message,
+    attachment
+):
+
+    global sesli_soru_sayisi
+
+    sesli_soru_sayisi += 1
+
+    await message.channel.send(
+        "🎤 **Sesli mesaj alındı!**\n\n"
+        "⏳ Ses yazıya çevriliyor..."
+    )
+
+    dosya_yolu = None
+
+    try:
+
+        with tempfile.NamedTemporaryFile(
+            delete=False,
+            suffix=".ogg"
+        ) as gecici_dosya:
+
+            dosya_yolu = gecici_dosya.name
+
+        await attachment.save(
+            dosya_yolu
+        )
+
+        soru = await sesi_yaziya_cevir(
+            dosya_yolu
+        )
+
+        if not soru:
+
+            await message.channel.send(
+                "❌ Sesli mesajdan konuşma algılanamadı.\n\n"
+                "Lütfen daha net bir sesli mesaj gönder."
+            )
+
+            return
+
+        await mesaj_gonder(
+            message.channel,
+            "🗣️ **Algılanan soru:**\n"
+            + soru
+        )
+
+        cevap = hazir_cevap_bul(
+            soru
+        )
+
+        if cevap is None:
+
+            await message.channel.send(
+                "🤖 **Ollama düşünüyor...**"
+            )
+
+            cevap = await yapay_zeka_cevabi(
+                soru
+            )
+
+        try:
+
+            soru_kaydet(
+                message.author.id,
+                str(message.author),
+                soru,
+                cevap
+            )
+
+        except Exception as hata:
+
+            print(
+                "⚠️ SESLİ SORU VERİTABANI HATASI:",
+                hata
+            )
+
+        await mesaj_gonder(
+            message.channel,
+            "🤖 **Cevap:**\n\n"
+            + cevap
+        )
+
+    except discord.NotFound:
+
+        await message.channel.send(
+            "❌ Ses dosyası artık bulunamıyor."
+        )
+
+    except discord.Forbidden:
+
+        await message.channel.send(
+            "❌ Ses dosyasını indirmek için gerekli Discord izni yok."
+        )
+
+    except Exception as hata:
+
+        print(
+            "❌ SESLİ SORU HATASI:",
+            hata
+        )
+
+        await message.channel.send(
+            "❌ Sesli mesaj işlenirken bir hata oluştu."
+        )
+
+    finally:
+
+        if (
+            dosya_yolu
+            and os.path.exists(dosya_yolu)
+        ):
+
+            try:
+
+                os.remove(
+                    dosya_yolu
+                )
+
+            except Exception as hata:
+
+                print(
+                    "⚠️ Geçici ses dosyası silinemedi:",
+                    hata
+                )
+
+
+
 
 @bot.event
 async def on_ready():
 
-    print("--------------------------------")
-    print("TEKNİK SERVİS BOTU ÇALIŞIYOR!")
-    print("Bot:", bot.user)
-    print("Yerel AI:", YEREL_AI_MODEL)
+    print(
+        "--------------------------------"
+    )
+
+    print(
+        "TEKNİK SERVİS BOTU ÇALIŞIYOR!"
+    )
+
+    print(
+        "Bot:",
+        bot.user
+    )
+
+    print(
+        "Yerel AI:",
+        YEREL_AI_MODEL
+    )
 
     try:
 
@@ -1641,12 +2525,19 @@ async def on_ready():
 
         if ai_durumu:
 
-            print("Ollama: BAĞLI")
-            print("Model: HAZIR")
+            print(
+                "Ollama: BAĞLI"
+            )
+
+            print(
+                "Model: HAZIR"
+            )
 
         else:
 
-            print("Ollama: BAĞLANAMADI / MODEL YOK")
+            print(
+                "Ollama: BAĞLANAMADI / MODEL YOK"
+            )
 
     except Exception as hata:
 
@@ -1669,17 +2560,18 @@ async def on_ready():
             hata
         )
 
-    print("--------------------------------")
+    print(
+        "--------------------------------"
+    )
 
 
-# ==================================================
-# MESAJ SİSTEMİ
-# ==================================================
+
 
 @bot.event
 async def on_message(message):
 
     global yazili_soru_sayisi
+    global sesli_soru_sayisi
 
     if message.author.bot:
         return
@@ -1691,6 +2583,69 @@ async def on_message(message):
         )
 
         return
+
+    if message.attachments:
+
+        ses_eki = None
+
+        for ek in message.attachments:
+
+            try:
+
+                if ek.is_voice_message():
+
+                    ses_eki = ek
+                    break
+
+            except AttributeError:
+
+                dosya_adi = ek.filename.lower()
+
+                content_type = str(
+                    ek.content_type or ""
+                ).lower()
+
+                if (
+                    content_type.startswith(
+                        "audio/"
+                    )
+                    or dosya_adi.endswith(".mp3")
+                    or dosya_adi.endswith(".wav")
+                    or dosya_adi.endswith(".ogg")
+                    or dosya_adi.endswith(".m4a")
+                    or dosya_adi.endswith(".webm")
+                    or dosya_adi.endswith(".aac")
+                    or dosya_adi.endswith(".flac")
+                ):
+
+                    ses_eki = ek
+                    break
+
+        if ses_eki is not None:
+
+            if (
+                message.author.id
+                not in sesli_mesaj_bekleyenler
+            ):
+
+                await message.channel.send(
+                    "🎤 Sesli mesaj algılandı.\n\n"
+                    "Sesli soru kullanmak için önce teknik destek "
+                    "menüsündeki **🎤 Sesli Mesaj** butonuna bas."
+                )
+
+                return
+
+            sesli_mesaj_bekleyenler.discard(
+                message.author.id
+            )
+
+            await sesli_soruyu_isle(
+                message,
+                ses_eki
+            )
+
+            return
 
     soru = message.content.strip()
 
@@ -1747,22 +2702,18 @@ async def on_message(message):
         )
 
 
-# ==================================================
-# !HELLO
-# ==================================================
+
 
 @bot.command()
 async def hello(ctx):
 
     await ctx.send(
-        BOT_ACIKLAMASI,
+        ANA_MENU_MESAJI,
         view=AnaMenu()
     )
 
 
-# ==================================================
-# !YARDIM
-# ==================================================
+
 
 @bot.command()
 async def yardim(ctx):
@@ -1773,7 +2724,9 @@ async def yardim(ctx):
         "💬 Sorunu doğrudan yazabilirsin.\n"
         "🤖 Yerel AI'ya soru sorabilirsin.\n"
         "📚 Son sorularını görebilirsin.\n"
-        "⭐ Geri bildirim bırakabilirsin.\n\n"
+        "⭐ Geri bildirim bırakabilirsin.\n"
+        "📖 Botun özelliklerini görmek için "
+        "**Bot Açıklaması** butonunu kullanabilirsin.\n\n"
         "Menüyü açmak için aşağıdaki butonları "
         "kullanabilirsin.",
 
@@ -1781,9 +2734,7 @@ async def yardim(ctx):
     )
 
 
-# ==================================================
-# MEVCUT KOMUTLAR
-# ==================================================
+
 
 @bot.command()
 async def siparis(ctx):
@@ -1832,7 +2783,9 @@ async def teknikdestek(ctx):
 async def teslimat(ctx):
 
     await ctx.send(
-        sorular["teslimat ne kadar sürer"]
+        sorular[
+            "teslimat ne kadar sürer"
+        ]
     )
 
 
@@ -1840,24 +2793,35 @@ async def teslimat(ctx):
 async def istatistik(ctx):
 
     try:
+
         toplam = soru_sayisi()
+
     except Exception:
+
         toplam = 0
 
     await ctx.send(
 
         "📊 **TEKNİK SERVİS İSTATİSTİKLERİ**\n\n"
         "💬 Yazılı sorular: "
-        + str(yazili_soru_sayisi)
+        + str(
+            yazili_soru_sayisi
+        )
         + "\n"
         "🎤 Sesli sorular: "
-        + str(sesli_soru_sayisi)
+        + str(
+            sesli_soru_sayisi
+        )
         + "\n"
         "🤖 AI soruları: "
-        + str(ai_soru_sayisi)
+        + str(
+            ai_soru_sayisi
+        )
         + "\n"
         "🗄️ Toplam kayıt: "
-        + str(toplam)
+        + str(
+            toplam
+        )
     )
 
 
@@ -1898,10 +2862,20 @@ async def gecmis(ctx):
         start=1
     ):
 
-        if isinstance(soru, (tuple, list)):
-            metin = str(soru[0])
+        if isinstance(
+            soru,
+            (tuple, list)
+        ):
+
+            metin = str(
+                soru[0]
+            )
+
         else:
-            metin = str(soru)
+
+            metin = str(
+                soru
+            )
 
         mesaj += (
             str(sayac)
@@ -1917,7 +2891,11 @@ async def gecmis(ctx):
 
 
 @bot.command()
-async def ai(ctx, *, soru=None):
+async def ai(
+    ctx,
+    *,
+    soru=None
+):
 
     if soru is None or not soru.strip():
 
@@ -2014,16 +2992,8 @@ async def site(ctx):
 async def hakkinda(ctx):
 
     await ctx.send(
-
-        "🛠️ **TEKNİK SERVİS ASİSTANI**\n\n"
-        "📚 Hazır cevap sistemi\n"
-        "🤖 Yerel yapay zekâ\n"
-        "🗄️ Veritabanı sistemi\n"
-        "📊 İstatistik sistemi\n"
-        "⭐ Geri bildirim sistemi\n"
-        "🔐 Yönetici sistemi\n"
-        "🌐 Web sitesi bağlantısı\n"
-        "📞 Teknik destek telefonu"
+        ANA_MENU_MESAJI,
+        view=AnaMenu()
     )
 
 
@@ -2038,7 +3008,9 @@ async def ping(ctx):
 
         "🏓 **Pong!**\n\n"
         "📡 Bot gecikmesi: "
-        + str(gecikme)
+        + str(
+            gecikme
+        )
         + " ms"
     )
 
@@ -2050,36 +3022,47 @@ async def ping(ctx):
 async def yonetici(ctx):
 
     try:
+
         toplam = soru_sayisi()
+
     except Exception:
+
         toplam = 0
 
     await ctx.send(
 
         "🔐 **YÖNETİCİ PANELİ**\n\n"
         "📊 Toplam soru: "
-        + str(toplam)
+        + str(
+            toplam
+        )
         + "\n"
         "💬 Yazılı soru: "
-        + str(yazili_soru_sayisi)
+        + str(
+            yazili_soru_sayisi
+        )
         + "\n"
         "🎤 Sesli soru: "
-        + str(sesli_soru_sayisi)
+        + str(
+            sesli_soru_sayisi
+        )
         + "\n"
         "🤖 AI sorusu: "
-        + str(ai_soru_sayisi)
+        + str(
+            ai_soru_sayisi
+        )
     )
 
 
-# ==================================================
-# YENİ 20 KOMUT
-# ==================================================
+
 
 @bot.command()
 async def telefonsorun(ctx):
 
     await ctx.send(
-        yeni_cevaplar["telefon sorunları"]
+        yeni_cevaplar[
+            "telefon sorunları"
+        ]
     )
 
 
@@ -2087,7 +3070,9 @@ async def telefonsorun(ctx):
 async def bilgisayarsorun(ctx):
 
     await ctx.send(
-        yeni_cevaplar["bilgisayar sorunları"]
+        yeni_cevaplar[
+            "bilgisayar sorunları"
+        ]
     )
 
 
@@ -2095,7 +3080,9 @@ async def bilgisayarsorun(ctx):
 async def wifisorun(ctx):
 
     await ctx.send(
-        yeni_cevaplar["wifi sorunları"]
+        yeni_cevaplar[
+            "wifi sorunları"
+        ]
     )
 
 
@@ -2103,7 +3090,9 @@ async def wifisorun(ctx):
 async def sarj(ctx):
 
     await ctx.send(
-        yeni_cevaplar["şarj sorunları"]
+        yeni_cevaplar[
+            "şarj sorunları"
+        ]
     )
 
 
@@ -2111,7 +3100,9 @@ async def sarj(ctx):
 async def pil(ctx):
 
     await ctx.send(
-        yeni_cevaplar["pil batarya"]
+        yeni_cevaplar[
+            "pil batarya"
+        ]
     )
 
 
@@ -2119,7 +3110,9 @@ async def pil(ctx):
 async def ekransorun(ctx):
 
     await ctx.send(
-        yeni_cevaplar["ekran sorunları"]
+        yeni_cevaplar[
+            "ekran sorunları"
+        ]
     )
 
 
@@ -2127,7 +3120,9 @@ async def ekransorun(ctx):
 async def klavyesorun(ctx):
 
     await ctx.send(
-        yeni_cevaplar["klavye sorunları"]
+        yeni_cevaplar[
+            "klavye sorunları"
+        ]
     )
 
 
@@ -2135,7 +3130,9 @@ async def klavyesorun(ctx):
 async def mousesorun(ctx):
 
     await ctx.send(
-        yeni_cevaplar["mouse sorunları"]
+        yeni_cevaplar[
+            "mouse sorunları"
+        ]
     )
 
 
@@ -2143,7 +3140,9 @@ async def mousesorun(ctx):
 async def yazicisorun(ctx):
 
     await ctx.send(
-        yeni_cevaplar["yazıcı sorunları"]
+        yeni_cevaplar[
+            "yazıcı sorunları"
+        ]
     )
 
 
@@ -2151,7 +3150,9 @@ async def yazicisorun(ctx):
 async def depolamasorun(ctx):
 
     await ctx.send(
-        yeni_cevaplar["depolama sorunları"]
+        yeni_cevaplar[
+            "depolama sorunları"
+        ]
     )
 
 
@@ -2159,7 +3160,9 @@ async def depolamasorun(ctx):
 async def ses(ctx):
 
     await ctx.send(
-        yeni_cevaplar["ses sorunları"]
+        yeni_cevaplar[
+            "ses sorunları"
+        ]
     )
 
 
@@ -2167,7 +3170,9 @@ async def ses(ctx):
 async def kamera(ctx):
 
     await ctx.send(
-        yeni_cevaplar["kamera sorunları"]
+        yeni_cevaplar[
+            "kamera sorunları"
+        ]
     )
 
 
@@ -2175,7 +3180,9 @@ async def kamera(ctx):
 async def bluetooth(ctx):
 
     await ctx.send(
-        yeni_cevaplar["bluetooth sorunları"]
+        yeni_cevaplar[
+            "bluetooth sorunları"
+        ]
     )
 
 
@@ -2183,7 +3190,9 @@ async def bluetooth(ctx):
 async def guncelleme(ctx):
 
     await ctx.send(
-        yeni_cevaplar["güncelleme sorunları"]
+        yeni_cevaplar[
+            "güncelleme sorunları"
+        ]
     )
 
 
@@ -2191,7 +3200,9 @@ async def guncelleme(ctx):
 async def guvenlik(ctx):
 
     await ctx.send(
-        yeni_cevaplar["güvenlik sorunları"]
+        yeni_cevaplar[
+            "güvenlik sorunları"
+        ]
     )
 
 
@@ -2199,7 +3210,9 @@ async def guvenlik(ctx):
 async def hesapguvenligi(ctx):
 
     await ctx.send(
-        yeni_cevaplar["hesap güvenliği"]
+        yeni_cevaplar[
+            "hesap güvenliği"
+        ]
     )
 
 
@@ -2207,7 +3220,9 @@ async def hesapguvenligi(ctx):
 async def teslimalma(ctx):
 
     await ctx.send(
-        yeni_cevaplar["teslim alma"]
+        yeni_cevaplar[
+            "teslim alma"
+        ]
     )
 
 
@@ -2215,7 +3230,9 @@ async def teslimalma(ctx):
 async def faturasorun(ctx):
 
     await ctx.send(
-        yeni_cevaplar["fatura sorunları"]
+        yeni_cevaplar[
+            "fatura sorunları"
+        ]
     )
 
 
@@ -2223,7 +3240,9 @@ async def faturasorun(ctx):
 async def odemes(ctx):
 
     await ctx.send(
-        yeni_cevaplar["ödeme sorunları"]
+        yeni_cevaplar[
+            "ödeme sorunları"
+        ]
     )
 
 
@@ -2231,16 +3250,19 @@ async def odemes(ctx):
 async def musterihizmetleri(ctx):
 
     await ctx.send(
-        yeni_cevaplar["müşteri hizmetleri"]
+        yeni_cevaplar[
+            "müşteri hizmetleri"
+        ]
     )
 
 
-# ==================================================
-# YÖNETİCİ HATA
-# ==================================================
+
 
 @yonetici.error
-async def yonetici_hata(ctx, hata):
+async def yonetici_hata(
+    ctx,
+    hata
+):
 
     if isinstance(
         hata,
@@ -2260,14 +3282,19 @@ async def yonetici_hata(ctx, hata):
     )
 
 
-# ==================================================
-# GENEL KOMUT HATASI
-# ==================================================
+
 
 @bot.event
-async def on_command_error(ctx, hata):
+async def on_command_error(
+    ctx,
+    hata
+):
 
-    if hasattr(ctx.command, "on_error"):
+    if hasattr(
+        ctx.command,
+        "on_error"
+    ):
+
         return
 
     if isinstance(
@@ -2334,11 +3361,6 @@ async def on_command_error(ctx, hata):
         hata
     )
 
-
-# ==================================================
-# VERİTABANI
-# ==================================================
-
 try:
 
     veritabani_olustur()
@@ -2355,9 +3377,7 @@ except Exception as hata:
     )
 
 
-# ==================================================
-# TOKEN KONTROLÜ
-# ==================================================
+
 
 if not DISCORD_TOKEN:
 
@@ -2375,7 +3395,7 @@ else:
     try:
 
         bot.run(
-            DISCORD_TOKEN
+            "TOKEN"
         )
 
     except discord.LoginFailure:
@@ -2407,8 +3427,8 @@ else:
             hata
         )
 
-# Discord botunu başlat.
-bot.run("TOKEN")
+
+
 
 
         
