@@ -1,14 +1,15 @@
 import discord
 from discord.ext import commands
-from openai import OpenAI
 
-import os
-import time
+import asyncio
+import requests
 
+
+# ==================================================
+# AYARLAR VE VERİTABANI
+# ==================================================
 
 from config import DISCORD_TOKEN
-from config import OPENAI_API_KEY
-from config import OPENAI_MODEL
 from config import PREFIX
 
 from database import veritabani_olustur
@@ -18,26 +19,34 @@ from database import kullanici_gecmisi
 
 
 # ==================================================
+# TEKNİK SERVİS BİLGİLERİ
+# ==================================================
+
+TEKNIK_SERVIS_SITESI = "https://www.trendyol.com/"
+TEKNIK_SERVIS_NUMARASI = "0850 540 600 025"
+
+
+# ==================================================
+# YEREL AI AYARLARI
+# ==================================================
+
+YEREL_AI_MODEL = "gemma3:1b"
+
+OLLAMA_URL = "http://localhost:11434/api/generate"
+OLLAMA_TAGS_URL = "http://localhost:11434/api/tags"
+
+
+# ==================================================
 # DISCORD AYARLARI
 # ==================================================
 
 intents = discord.Intents.default()
-
 intents.message_content = True
-
 
 bot = commands.Bot(
     command_prefix=PREFIX,
-    intents=intents
-)
-
-
-# ==================================================
-# OPENAI
-# ==================================================
-
-openai_client = OpenAI(
-    api_key=OPENAI_API_KEY
+    intents=intents,
+    help_command=None
 )
 
 
@@ -51,33 +60,51 @@ ai_soru_sayisi = 0
 
 
 # ==================================================
-# BOT AÇIKLAMASI
+# BOT TANITIMI
 # ==================================================
 
 BOT_ACIKLAMASI = (
-    "🛠️ **Teknik Servis Asistanı**\n\n"
-    "Merhaba! Ben teknik servis destek botuyum.\n\n"
+    "🛠️ **TEKNİK SERVİS ASİSTANI**\n\n"
 
-    "📚 Sıkça sorulan soruları hazır cevaplarla "
-    "yanıtlayabilirim.\n"
+    "Merhaba! Ben teknik servis destek botuyum. 🤖\n\n"
 
-    "🤖 Hazır cevap bulunamadığında yapay zekâ "
-    "ile cevap oluşturabilirim.\n"
+    "Size şu konularda yardımcı olabilirim:\n\n"
 
-    "🎤 Sesli mesajları yazıya çevirip "
-    "sorunuzu analiz edebilirim.\n"
+    "🛒 Alışveriş\n"
+    "📦 Sipariş durumu\n"
+    "❌ Sipariş iptali\n"
+    "⚠️ Hasarlı ürün\n"
+    "🔧 Teknik destek\n"
+    "🚚 Teslimat\n"
+    "↩️ İade\n"
+    "🛡️ Garanti\n"
+    "💳 Ödeme\n"
+    "🧾 Fatura\n"
+    "👤 Hesap\n"
+    "🔑 Şifre\n"
+    "💻 Bilgisayar\n"
+    "📱 Telefon ve tablet\n"
+    "🌐 İnternet\n"
+    "🖨️ Yazıcı\n"
+    "🔋 Batarya\n"
+    "💾 Depolama\n"
+    "🖥️ Ekran\n"
+    "⌨️ Klavye\n"
+    "🖱️ Mouse\n"
+    "🔌 Şarj\n"
+    "🔊 Ses\n"
+    "📷 Kamera\n"
+    "📶 Bluetooth\n"
+    "🔄 Güncelleme\n"
+    "🛡️ Güvenlik\n"
+    "🔐 Hesap güvenliği\n"
+    "📦 Teslim alma\n"
+    "🤖 Yerel yapay zekâ\n"
+    "📚 Soru geçmişi\n"
+    "📊 İstatistikler\n"
+    "⭐ Geri bildirim\n\n"
 
-    "🗄️ Sorularınızı veritabanına kaydedebilir "
-    "ve geçmiş sorularınızı gösterebilirim.\n"
-
-    "📊 Botun kullanım istatistiklerini "
-    "gösterebilirim.\n"
-
-    "⭐ Hizmet hakkında geri bildirim "
-    "bırakabilirsiniz.\n\n"
-
-    "Aşağıdaki butonlardan yapmak istediğiniz "
-    "işlemi seçebilirsiniz."
+    "Bir konu seçmek için aşağıdaki butonları kullanabilirsin."
 )
 
 
@@ -88,305 +115,592 @@ BOT_ACIKLAMASI = (
 sorular = {
 
     "nasıl alışveriş yapabilirim":
-        "Alışveriş yapmak için ilgilendiğiniz ürünü "
-        "seçip \"Alışveriş Sepetine Ekle\" butonuna "
-        "tıklayın. Ardından sepetinize giderek "
-        "satın alma işlemini tamamlayabilirsiniz.",
+        "🛒 İstediğiniz ürünü seçip sepete ekleyebilirsiniz. "
+        "Daha sonra sepet bölümünden satın alma işlemini "
+        "tamamlayabilirsiniz.",
 
     "siparişimin durumunu nasıl öğrenebilirim":
-        "Siparişinizin durumunu öğrenmek için "
-        "internet sitemizdeki hesabınıza giriş yapın "
-        "ve \"Siparişlerim\" bölümüne gidin.",
+        "📦 Sipariş durumunuzu hesabınızdaki "
+        "\"Siparişlerim\" bölümünden kontrol edebilirsiniz.",
 
     "bir siparişi nasıl iptal edebilirim":
-        "Siparişinizi iptal etmek istiyorsanız en kısa "
-        "sürede müşteri hizmetleriyle iletişime geçin. "
-        "Sipariş gönderilmeden önce iptal konusunda "
-        "yardımcı olmaya çalışacağız.",
+        "❌ Siparişiniz gönderilmeden önce iptal işlemi "
+        "yapılabilir. İptal için sipariş bölümünü kontrol "
+        "edebilir veya müşteri hizmetleriyle iletişime "
+        "geçebilirsiniz.",
 
     "siparişim hasarlı gelirse ne yapmalıyım":
-        "Hasarlı bir ürün aldıysanız müşteri "
-        "hizmetleriyle iletişime geçin ve hasarın "
-        "fotoğraflarını gönderin.",
+        "⚠️ Hasarlı ürün teslim aldıysanız ürünü kullanmadan "
+        "müşteri hizmetleriyle iletişime geçmeniz ve mümkünse "
+        "ürünün fotoğraflarını saklamanız önerilir.",
 
     "teknik destekle nasıl iletişime geçebilirim":
-        "Teknik destek için internet sitemizdeki "
-        "telefon numarasını kullanabilir veya "
-        "bu teknik servis botundan yardım alabilirsiniz.",
+        "🔧 Teknik destek için:\n\n"
+        "📞 Telefon: " + TEKNIK_SERVIS_NUMARASI + "\n"
+        "🌐 Web sitesi: " + TEKNIK_SERVIS_SITESI,
 
-    "ödeme sırasında teslimat yöntemini değiştirebilir miyim":
-        "Evet. Ödeme sayfasında kullanılabilir "
-        "teslimat yöntemlerinden uygun olanı "
-        "seçebilirsiniz.",
+    "teslimat ne kadar sürer":
+        "🚚 Teslimat süresi ürüne, satıcıya ve kargo şirketine "
+        "göre değişebilir. Siparişinizin tahmini teslimat "
+        "tarihini sipariş bilgilerinden kontrol edebilirsiniz.",
 
     "iade nasıl yapılır":
-        "İade işlemi hakkında bilgi almak için "
-        "müşteri hizmetleriyle iletişime geçebilirsiniz. "
-        "İade şartları ürüne ve sipariş durumuna göre "
-        "değişebilir.",
+        "↩️ İade işlemi için siparişleriniz bölümünden ilgili "
+        "siparişi seçebilir ve mevcut iade seçeneklerini "
+        "kontrol edebilirsiniz.",
 
     "garanti süresi ne kadar":
-        "Garanti süresi ürünlere göre değişebilir. "
-        "Ürünün garanti bilgilerini ürün sayfasından "
-        "veya satın alma belgelerinizden kontrol "
-        "edebilirsiniz.",
+        "🛡️ Garanti süresi ürüne göre değişebilir. "
+        "Ürün sayfasındaki veya satın alma belgesindeki "
+        "garanti bilgilerini kontrol edebilirsiniz.",
 
     "ödeme başarısız oldu":
-        "Ödeme sırasında sorun yaşıyorsanız kart "
-        "bilgilerinizi kontrol edip tekrar deneyin. "
-        "Sorun devam ederse müşteri hizmetleriyle "
-        "iletişime geçebilirsiniz.",
+        "💳 Kart bilgilerinizi kontrol edip tekrar deneyin. "
+        "Sorun devam ederse farklı bir ödeme yöntemi "
+        "deneyebilir veya müşteri hizmetleriyle iletişime "
+        "geçebilirsiniz.",
 
     "fatura nasıl alınır":
-        "Faturanıza hesabınızdaki \"Siparişlerim\" "
-        "bölümünden ulaşabilirsiniz."
+        "🧾 Faturanıza hesabınızdaki siparişler bölümünden "
+        "ulaşabilirsiniz.",
+
+    "hesabımı nasıl açabilirim":
+        "👤 Web sitesindeki hesap bölümünden kayıt olarak "
+        "yeni bir hesap oluşturabilirsiniz.",
+
+    "şifremi unuttum":
+        "🔑 Giriş ekranındaki \"Şifremi Unuttum\" seçeneğini "
+        "kullanarak şifrenizi yenileyebilirsiniz.",
+
+    "ürün nasıl aranır":
+        "🔎 Web sitesindeki arama bölümüne ürünün adını "
+        "yazarak arama yapabilirsiniz.",
+
+    "ürün stokta yok":
+        "📦 Ürün stokta yoksa daha sonra tekrar kontrol "
+        "edebilirsiniz. Stok durumu zaman içinde değişebilir.",
+
+    "sipariş numaramı nereden bulabilirim":
+        "🔢 Sipariş numaranızı siparişlerim bölümündeki "
+        "ilgili siparişin ayrıntılarında bulabilirsiniz.",
+
+    "kargo takip numarası nerede":
+        "🚚 Kargo takip numarası, siparişiniz kargoya "
+        "verildikten sonra sipariş bilgilerinde görünebilir.",
+
+    "kargom nerede":
+        "📦 Kargonuzu takip etmek için siparişinizdeki "
+        "kargo takip bilgilerini kontrol edebilirsiniz.",
+
+    "ürün bozuk geldi":
+        "⚠️ Ürün bozuk geldiyse ürünü kullanmayı bırakın ve "
+        "müşteri hizmetleriyle iletişime geçin.",
+
+    "ürün kırık geldi":
+        "⚠️ Ürün kırık geldiyse durumu müşteri hizmetlerine "
+        "bildirin ve ürünün fotoğraflarını saklayın.",
+
+    "bilgisayarım açılmıyor":
+        "💻 Bilgisayar açılmıyorsa güç bağlantısını, şarj "
+        "adaptörünü ve güç düğmesini kontrol edin. Sorun "
+        "devam ederse teknik destek alın.",
+
+    "bilgisayarım yavaş":
+        "🐌 Bilgisayar yavaşsa gereksiz programları kapatmayı, "
+        "bilgisayarı yeniden başlatmayı ve depolama alanını "
+        "kontrol etmeyi deneyebilirsiniz.",
+
+    "telefonum açılmıyor":
+        "📱 Telefon açılmıyorsa şarj durumunu kontrol edin "
+        "ve cihazı yeniden başlatmayı deneyin. Sorun devam "
+        "ederse teknik destek alın.",
+
+    "tablet açılmıyor":
+        "📱 Tablet açılmıyorsa şarj bağlantısını kontrol edin "
+        "ve cihazı yeniden başlatmayı deneyin.",
+
+    "telefon şarj olmuyor":
+        "🔌 Şarj kablosunu ve adaptörü kontrol edin. Farklı "
+        "bir uyumlu şarj kablosu veya adaptör ile deneme "
+        "yapabilirsiniz.",
+
+    "batarya çabuk bitiyor":
+        "🔋 Pilin hızlı tükenmesinin birçok nedeni olabilir. "
+        "Arka plandaki gereksiz uygulamaları kapatmayı ve "
+        "pil kullanım bölümünü kontrol etmeyi deneyin.",
+
+    "ekran çalışmıyor":
+        "🖥️ Ekran çalışmıyorsa cihazın güç durumunu ve "
+        "bağlantılarını kontrol edin. Sorun devam ederse "
+        "teknik destek alın.",
+
+    "internet çalışmıyor":
+        "🌐 Modemi ve cihazınızı yeniden başlatmayı deneyin. "
+        "Sorun devam ederse internet servis sağlayıcınızla "
+        "iletişime geçebilirsiniz.",
+
+    "wifi bağlanmıyor":
+        "📡 Wi-Fi bağlantısını kapatıp tekrar açmayı ve "
+        "ağı yeniden seçmeyi deneyin.",
+
+    "yazıcı çalışmıyor":
+        "🖨️ Yazıcının güç bağlantısını, kablosunu ve kağıt "
+        "durumunu kontrol edin.",
+
+    "klavye çalışmıyor":
+        "⌨️ Klavye bağlantısını kontrol edin. USB bağlantısı "
+        "kullanıyorsanız farklı bir USB bağlantısı deneyebilirsiniz.",
+
+    "mouse çalışmıyor":
+        "🖱️ Mouse bağlantısını ve pil durumunu kontrol edin. "
+        "Kabloluysa bağlantıyı tekrar takmayı deneyebilirsiniz.",
+
+    "depolama alanım dolu":
+        "💾 Gereksiz dosyaları ve kullanmadığınız programları "
+        "silerek depolama alanı açabilirsiniz.",
+
+    "uygulama çalışmıyor":
+        "📱 Uygulamayı kapatıp tekrar açmayı ve cihazı "
+        "yeniden başlatmayı deneyin.",
+
+    "ürün hakkında bilgi":
+        "🛒 Ürünün teknik özelliklerini ürün sayfasından "
+        "kontrol edebilirsiniz.",
+
+    "müşteri hizmetleri":
+        "☎️ Müşteri hizmetleri için:\n\n"
+        "📞 " + TEKNIK_SERVIS_NUMARASI + "\n"
+        "🌐 " + TEKNIK_SERVIS_SITESI,
+
+    "teknik servis nerede":
+        "🔧 Teknik servis bilgileri için:\n\n"
+        "📞 " + TEKNIK_SERVIS_NUMARASI + "\n"
+        "🌐 " + TEKNIK_SERVIS_SITESI,
+
+    "ödeme yöntemleri":
+        "💳 Kullanılabilir ödeme yöntemlerini ödeme "
+        "sayfasında görebilirsiniz.",
+
+    "sipariş verdim":
+        "📦 Siparişinizin durumunu hesabınızdaki "
+        "\"Siparişlerim\" bölümünden kontrol edebilirsiniz.",
+
+    "ürün değiştirmek istiyorum":
+        "🔄 Ürün değişimi için ilgili siparişin seçeneklerini "
+        "kontrol edin veya müşteri hizmetleriyle iletişime geçin.",
+
+    "adresimi değiştirmek istiyorum":
+        "🏠 Sipariş gönderilmeden önce adres değişikliği "
+        "mümkün olabilir. Sipariş bilgilerinizi kontrol edin.",
+
+    "hesabımı kapatmak istiyorum":
+        "👤 Hesap kapatma işlemleri için hesap ayarlarınızı "
+        "kontrol edebilir veya müşteri hizmetleriyle "
+        "iletişime geçebilirsiniz."
 }
 
 
 # ==================================================
-# SSS ALTERNATİF KELİMELERİ
+# YENİ 20 TEKNİK DESTEK CEVABI
 # ==================================================
 
-sss_anahtarlari = {
+yeni_cevaplar = {
 
-    "nasıl alışveriş yapabilirim": [
-        "alışveriş",
-        "alisveris",
-        "satın alma",
-        "satin alma",
-        "ürün nasıl alırım",
-        "urun nasil alirim",
-        "ürün satın",
-        "urun satin",
-        "ürün almak",
-        "urun almak"
-    ],
+    "telefon sorunları":
+        "📱 Telefonunuzda sorun varsa öncelikle cihazı yeniden "
+        "başlatmayı ve şarj durumunu kontrol etmeyi deneyin. "
+        "Sorun devam ederse teknik destek alın.",
 
-    "siparişimin durumunu nasıl öğrenebilirim": [
-        "siparişim nerede",
-        "siparisim nerede",
-        "sipariş durumu",
-        "siparis durumu",
-        "siparişimi takip",
-        "siparisimi takip",
-        "kargom nerede",
-        "kargo nerede"
-    ],
+    "bilgisayar sorunları":
+        "💻 Bilgisayar sorunlarında cihazı yeniden başlatmayı, "
+        "kabloları kontrol etmeyi ve depolama alanını incelemeyi "
+        "deneyebilirsiniz.",
 
-    "bir siparişi nasıl iptal edebilirim": [
-        "sipariş iptal",
-        "siparis iptal",
-        "siparişi iptal",
-        "siparisi iptal",
-        "siparişimi iptal",
-        "siparisimi iptal",
-        "ürünü iptal",
-        "urunu iptal"
-    ],
+    "wifi sorunları":
+        "📡 Wi-Fi sorunu yaşıyorsanız modemi ve cihazı yeniden "
+        "başlatmayı deneyin. Wi-Fi bağlantısını kapatıp tekrar "
+        "açabilirsiniz.",
 
-    "siparişim hasarlı gelirse ne yapmalıyım": [
-        "hasarlı ürün",
-        "hasarli urun",
-        "ürün hasarlı",
-        "urun hasarli",
-        "ürün kırık",
-        "urun kirik",
-        "sipariş hasarlı",
-        "siparis hasarli",
-        "kırık geldi",
-        "kirik geldi",
-        "bozuk ürün",
-        "bozuk urun"
-    ],
+    "şarj sorunları":
+        "🔌 Şarj sorunu için kabloyu ve adaptörü kontrol edin. "
+        "Mümkünse uyumlu başka bir kablo veya adaptör deneyin.",
 
-    "teknik destekle nasıl iletişime geçebilirim": [
-        "teknik destek",
-        "teknikdestek",
-        "destek ekibi",
-        "destekle iletişim",
-        "destekle iletisim",
-        "teknik servis",
-        "müşteri hizmetleri",
-        "musteri hizmetleri"
-    ],
+    "pil batarya":
+        "🔋 Pil hızlı bitiyorsa arka plandaki gereksiz uygulamaları "
+        "kapatın ve pil kullanım bölümünü kontrol edin.",
 
-    "ödeme sırasında teslimat yöntemini değiştirebilir miyim": [
-        "teslimat yöntemi",
-        "teslimat yontemi",
-        "teslimat değiştirme",
-        "teslimat degistirme",
-        "kargo yöntemini değiştir",
-        "kargo yontemini degistir",
-        "kargo seçeneği",
-        "kargo secenegi"
-    ],
+    "ekran sorunları":
+        "🖥️ Ekran sorunu varsa cihazın açık olduğundan ve güç "
+        "bağlantısının bulunduğundan emin olun. Sorun devam ederse "
+        "teknik destek alın.",
 
-    "iade nasıl yapılır": [
-        "iade",
-        "ürünü iade",
-        "urunu iade",
-        "ürün iade",
-        "urun iade",
-        "para iadesi",
-        "paramı geri",
-        "parami geri"
-    ],
+    "klavye sorunları":
+        "⌨️ Klavye çalışmıyorsa bağlantıyı kontrol edin. USB "
+        "klavyelerde farklı bir USB bağlantısı deneyebilirsiniz.",
 
-    "garanti süresi ne kadar": [
-        "garanti",
-        "garanti süresi",
-        "garanti suresi",
-        "garantisi var mı",
-        "garantisi var mi",
-        "garanti ne kadar"
-    ],
+    "mouse sorunları":
+        "🖱️ Mouse çalışmıyorsa kablo veya USB bağlantısını kontrol "
+        "edin. Kablosuz mouse kullanıyorsanız pil durumunu kontrol edin.",
 
-    "ödeme başarısız oldu": [
-        "ödeme",
-        "odeme",
-        "ödeme yapamıyorum",
-        "odeme yapamiyorum",
-        "ödeme başarısız",
-        "odeme basarisiz",
-        "kart çalışmıyor",
-        "kart calismiyor",
-        "kart geçmiyor",
-        "kart gecmiyor"
-    ],
+    "yazıcı sorunları":
+        "🖨️ Yazıcı çalışmıyorsa güç bağlantısını, USB/Wi-Fi "
+        "bağlantısını ve kağıt durumunu kontrol edin.",
 
-    "fatura nasıl alınır": [
-        "fatura",
-        "faturam",
-        "fatura almak",
-        "faturayı nasıl",
-        "faturayi nasil",
-        "faturam nerede"
-    ]
+    "depolama sorunları":
+        "💾 Depolama alanı doluysa kullanmadığınız uygulamaları "
+        "ve gereksiz dosyaları kaldırarak yer açabilirsiniz.",
+
+    "ses sorunları":
+        "🔊 Ses gelmiyorsa ses seviyesini, sessiz modu ve seçili "
+        "ses çıkış cihazını kontrol edin.",
+
+    "kamera sorunları":
+        "📷 Kamera çalışmıyorsa uygulamanın kamera iznini ve "
+        "cihazın kamera ayarlarını kontrol edin.",
+
+    "bluetooth sorunları":
+        "📶 Bluetooth bağlanmıyorsa Bluetooth'u kapatıp açın ve "
+        "bağlanmak istediğiniz cihazı yeniden eşleştirmeyi deneyin.",
+
+    "güncelleme sorunları":
+        "🔄 Güncelleme yapılmıyorsa cihazın internete bağlı "
+        "olduğundan ve yeterli depolama alanı bulunduğundan emin olun.",
+
+    "güvenlik sorunları":
+        "🛡️ Güvenlik için güçlü ve benzersiz parolalar kullanın, "
+        "şüpheli bağlantılara tıklamayın ve cihazınızı güncel tutun.",
+
+    "hesap güvenliği":
+        "🔐 Hesabınızı korumak için güçlü bir parola kullanın ve "
+        "mümkünse iki aşamalı doğrulamayı etkinleştirin.",
+
+    "teslim alma":
+        "📦 Teslim alırken mümkünse paketin dış durumunu kontrol "
+        "edin. Hasar fark ederseniz durumu kargo ve müşteri hizmetlerine "
+        "bildirin.",
+
+    "fatura sorunları":
+        "🧾 Faturanıza ulaşamıyorsanız hesabınızdaki siparişler "
+        "bölümünü kontrol edin. Sorun devam ederse müşteri hizmetlerine "
+        "başvurabilirsiniz.",
+
+    "ödeme sorunları":
+        "💳 Ödeme sorunu yaşıyorsanız kart bilgilerini ve kullanılabilir "
+        "ödeme yöntemlerini kontrol edin. Sorun devam ederse farklı "
+        "bir ödeme yöntemi deneyebilirsiniz.",
+
+    "müşteri hizmetleri":
+        "📞 Müşteri hizmetleri için:\n\n"
+        "Telefon: " + TEKNIK_SERVIS_NUMARASI + "\n"
+        "Web sitesi: " + TEKNIK_SERVIS_SITESI
 }
 
 
 # ==================================================
-# SORUYU TEMİZLEME
+# SORUYU TEMİZLE
 # ==================================================
 
 def soruyu_temizle(soru):
 
-    soru = soru.lower()
+    if not isinstance(soru, str):
+        return ""
 
-    soru = soru.strip()
+    soru = soru.lower().strip()
 
-    noktalama = "?!.,;:()[]{}\"'"
+    noktalama = "?!.,;:()[]{}\"'`"
 
     for karakter in noktalama:
+        soru = soru.replace(karakter, "")
 
-        soru = soru.replace(
-            karakter,
-            ""
-        )
-
-    soru = " ".join(
-        soru.split()
-    )
+    soru = " ".join(soru.split())
 
     return soru
 
 
 # ==================================================
-# HAZIR CEVAP BULMA
+# HAZIR CEVAP BUL
 # ==================================================
 
 def hazir_cevap_bul(soru):
 
-    soru = soruyu_temizle(
-        soru
-    )
+    soru = soruyu_temizle(soru)
 
-    # Ana soruları kontrol et
+    if not soru:
+        return None
 
-    for anahtar in sorular:
+    for anahtar, cevap in sorular.items():
 
-        if anahtar in soru:
+        temiz_anahtar = soruyu_temizle(anahtar)
 
-            return sorular[anahtar]
-
-
-    # Alternatif kelimeleri kontrol et
-
-    for anahtar in sss_anahtarlari:
-
-        for kelime in sss_anahtarlari[anahtar]:
-
-            if kelime in soru:
-
-                return sorular[anahtar]
-
+        if temiz_anahtar in soru:
+            return cevap
 
     return None
 
 
 # ==================================================
-# YAPAY ZEKA
+# OLLAMA KONTROL
 # ==================================================
 
-def yapay_zeka_cevabi(soru):
+def ollama_kontrol_sync():
+
+    try:
+
+        cevap = requests.get(
+            OLLAMA_TAGS_URL,
+            timeout=5
+        )
+
+        if cevap.status_code != 200:
+
+            print(
+                "⚠️ Ollama HTTP durumu:",
+                cevap.status_code
+            )
+
+            return False
+
+        veri = cevap.json()
+
+        modeller = veri.get(
+            "models",
+            []
+        )
+
+        bulunan_modeller = []
+
+        for model in modeller:
+
+            isim = str(
+                model.get("name", "")
+            )
+
+            bulunan_modeller.append(
+                isim
+            )
+
+            if (
+                isim == YEREL_AI_MODEL
+                or isim.startswith(YEREL_AI_MODEL + ":")
+            ):
+                return True
+
+        print(
+            "⚠️ Ollama çalışıyor fakat model bulunamadı:",
+            YEREL_AI_MODEL
+        )
+
+        if bulunan_modeller:
+
+            print(
+                "📦 Yüklü modeller:",
+                ", ".join(bulunan_modeller)
+            )
+
+        return False
+
+    except requests.exceptions.ConnectionError:
+
+        print("❌ Ollama çalışmıyor.")
+
+        return False
+
+    except requests.exceptions.Timeout:
+
+        print("⏳ Ollama kontrolü zaman aşımına uğradı.")
+
+        return False
+
+    except Exception as hata:
+
+        print(
+            "⚠️ Ollama kontrol hatası:",
+            hata
+        )
+
+        return False
+
+
+async def ollama_kontrol():
+
+    return await asyncio.to_thread(
+        ollama_kontrol_sync
+    )
+
+
+# ==================================================
+# YEREL AI
+# ==================================================
+
+def yerel_ai_cevabi_sync(soru):
+
+    sistem_mesaji = (
+        "Sen Türkçe konuşan bir teknik servis destek botusun.\n\n"
+        "Kısa, anlaşılır ve yardımcı cevaplar ver.\n"
+        "Teknik servis, bilgisayar, telefon, tablet, internet, "
+        "sipariş, alışveriş, kargo, iade, garanti, ödeme ve fatura "
+        "konularında yardımcı ol.\n"
+        "Bilmediğin şirket bilgilerini uydurma.\n"
+        "Bilmediğin sipariş bilgilerini uydurma.\n"
+        "Tehlikeli işlemler için güvenli ve genel öneriler ver.\n"
+        "Kullanıcıya Türkçe cevap ver."
+    )
+
+    prompt = (
+        sistem_mesaji
+        + "\n\nKullanıcının sorusu:\n"
+        + soru
+        + "\n\nCevap:"
+    )
+
+    try:
+
+        sonuc = requests.post(
+
+            OLLAMA_URL,
+
+            json={
+                "model": YEREL_AI_MODEL,
+                "prompt": prompt,
+                "stream": False,
+                "options": {
+                    "temperature": 0.7
+                }
+            },
+
+            timeout=120
+        )
+
+        if sonuc.status_code != 200:
+
+            print(
+                "❌ OLLAMA HTTP HATASI:",
+                sonuc.status_code
+            )
+
+            print(
+                sonuc.text[:1000]
+            )
+
+            return (
+                "❌ Yerel yapay zekâ şu anda cevap veremiyor.\n\n"
+                "Ollama'nın çalıştığını ve "
+                f"`{YEREL_AI_MODEL}` modelinin yüklü olduğunu "
+                "kontrol edin."
+            )
+
+        try:
+
+            veri = sonuc.json()
+
+        except ValueError:
+
+            return (
+                "❌ Ollama'dan geçerli bir cevap alınamadı."
+            )
+
+        cevap = str(
+            veri.get("response", "")
+        ).strip()
+
+        if cevap == "":
+
+            return (
+                "❌ Yapay zekâ boş bir cevap verdi."
+            )
+
+        return cevap
+
+    except requests.exceptions.ConnectionError:
+
+        print(
+            "❌ Ollama çalışmıyor."
+        )
+
+        return (
+            "❌ Yerel yapay zekâya bağlanılamadı.\n\n"
+            "Ollama'nın çalıştığından emin olun."
+        )
+
+    except requests.exceptions.Timeout:
+
+        return (
+            "⏳ Yapay zekâ çok uzun sürede cevap verdi."
+        )
+
+    except Exception as hata:
+
+        print(
+            "❌ YEREL AI HATASI:",
+            hata
+        )
+
+        return (
+            "❌ Yerel yapay zekâya ulaşılamadı."
+        )
+
+
+async def yerel_ai_cevabi(soru):
 
     global ai_soru_sayisi
 
     ai_soru_sayisi += 1
 
-    cevap = openai_client.responses.create(
-
-        model=OPENAI_MODEL,
-
-        input=[
-
-            {
-                "role": "system",
-
-                "content":
-                    "Sen bir teknik servis destek "
-                    "botusun. Türkçe cevap ver. "
-                    "Kısa, anlaşılır ve yardımcı ol. "
-                    "Bilmediğin şirket bilgilerini "
-                    "uydurma. Teknik servis, alışveriş, "
-                    "sipariş, teslimat, ödeme, garanti "
-                    "ve iade konularında yardımcı ol."
-            },
-
-            {
-                "role": "user",
-
-                "content": soru
-            }
-        ]
+    return await asyncio.to_thread(
+        yerel_ai_cevabi_sync,
+        soru
     )
 
-    return cevap.output_text
+
+async def yapay_zeka_cevabi(soru):
+
+    return await yerel_ai_cevabi(
+        soru
+    )
 
 
 # ==================================================
-# SESLİ MESAJI YAZIYA ÇEVİRME
+# MESAJI PARÇALA
 # ==================================================
 
-def sesli_mesaji_yaziya_cevir(dosya_adi):
+def mesaj_parcalari(mesaj, maksimum=1900):
 
-    with open(
-        dosya_adi,
-        "rb"
-    ) as ses_dosyasi:
+    if not mesaj:
+        return [""]
 
-        cevap = openai_client.audio.transcriptions.create(
+    parcalar = []
 
-            model="gpt-4o-mini-transcribe",
+    while len(mesaj) > maksimum:
 
-            file=ses_dosyasi
+        bolum = mesaj[:maksimum]
+
+        son_bosluk = bolum.rfind(" ")
+
+        if son_bosluk > 500:
+            bolum = bolum[:son_bosluk]
+
+        parcalar.append(bolum)
+
+        mesaj = mesaj[len(bolum):].lstrip()
+
+    if mesaj:
+        parcalar.append(mesaj)
+
+    return parcalar
+
+
+async def mesaj_gonder(channel, mesaj, **kwargs):
+
+    for parca in mesaj_parcalari(mesaj):
+
+        await channel.send(
+            parca,
+            **kwargs
         )
 
-    return cevap.text
-
 
 # ==================================================
-# GERİ BİLDİRİM MODALI
+# GERİ BİLDİRİM
 # ==================================================
 
 class GeriBildirimModal(discord.ui.Modal):
@@ -397,76 +711,43 @@ class GeriBildirimModal(discord.ui.Modal):
             title="Teknik Servis Geri Bildirimi"
         )
 
-
         self.puan = discord.ui.TextInput(
-
             label="Hizmetimizi 1-5 arasında puanlayın",
-
             placeholder="Örneğin: 5",
-
             required=True,
-
             max_length=1
         )
 
-
         self.yorum = discord.ui.TextInput(
-
             label="Yorumunuz",
-
             placeholder="Bot hakkında düşüncenizi yazın...",
-
             style=discord.TextStyle.paragraph,
-
             required=False,
-
             max_length=500
         )
 
+        self.add_item(self.puan)
+        self.add_item(self.yorum)
 
-        self.add_item(
-            self.puan
-        )
+    async def on_submit(self, interaction):
 
-        self.add_item(
-            self.yorum
-        )
-
-
-    async def on_submit(
-        self,
-        interaction
-    ):
-
-        puan = str(
-            self.puan.value
-        ).strip()
-
-
-        yorum = str(
-            self.yorum.value
-        ).strip()
-
+        puan = str(self.puan.value).strip()
+        yorum = str(self.yorum.value).strip()
 
         if puan not in ["1", "2", "3", "4", "5"]:
 
             await interaction.response.send_message(
-
                 "❌ Lütfen 1 ile 5 arasında bir puan girin.",
-
                 ephemeral=True
             )
 
             return
 
-
         if yorum == "":
-
             yorum = "Yorum bırakılmadı."
 
-
         print(
-            "GERİ BİLDİRİM:",
+            "⭐ GERİ BİLDİRİM:",
             str(interaction.user),
             "| Puan:",
             puan,
@@ -474,15 +755,10 @@ class GeriBildirimModal(discord.ui.Modal):
             yorum
         )
 
-
         await interaction.response.send_message(
-
             "⭐ **Geri bildirimin için teşekkürler!**\n\n"
-            "Puanın: "
-            + puan
-            + "/5\n\n"
+            "Puanın: " + puan + "/5\n\n"
             "Görüşün bizim için çok değerli.",
-
             ephemeral=True
         )
 
@@ -499,88 +775,78 @@ class AIsoruModal(discord.ui.Modal):
             title="Yapay Zekâya Soru Sor"
         )
 
-
         self.soru = discord.ui.TextInput(
-
             label="Sorunuz",
-
             placeholder="Örneğin: Bilgisayarım neden açılmıyor?",
-
             style=discord.TextStyle.paragraph,
-
             required=True,
-
             max_length=1000
         )
 
+        self.add_item(self.soru)
 
-        self.add_item(
-            self.soru
-        )
-
-
-    async def on_submit(
-        self,
-        interaction
-    ):
+    async def on_submit(self, interaction):
 
         soru = str(
             self.soru.value
-        )
+        ).strip()
 
+        if not soru:
+
+            await interaction.response.send_message(
+                "❌ Soru boş olamaz.",
+                ephemeral=True
+            )
+
+            return
 
         await interaction.response.defer(
             ephemeral=True
         )
 
-
         try:
 
-            cevap = yapay_zeka_cevabi(
+            cevap = await yapay_zeka_cevabi(
                 soru
             )
 
+            try:
 
-            soru_kaydet(
+                soru_kaydet(
+                    interaction.user.id,
+                    str(interaction.user),
+                    soru,
+                    cevap
+                )
 
-                interaction.user.id,
+            except Exception as hata:
 
-                str(interaction.user),
-
-                soru,
-
-                cevap
-            )
-
+                print(
+                    "⚠️ VERİTABANI HATASI:",
+                    hata
+                )
 
             await interaction.followup.send(
-
-                "🤖 **Yapay Zekâ Cevabı:**\n\n"
+                "🤖 **Yerel Yapay Zekâ Cevabı:**\n\n"
                 + cevap,
-
                 ephemeral=True
             )
-
 
         except Exception as hata:
 
             print(
-                "AI HATASI:",
+                "❌ AI HATASI:",
                 hata
             )
 
-
             await interaction.followup.send(
-
-                "❌ Yapay zekâ servisine şu anda "
-                "ulaşılamıyor. Lütfen daha sonra tekrar deneyin.",
-
+                "❌ Yerel yapay zekâya ulaşılamadı.",
                 ephemeral=True
             )
 
 
 # ==================================================
-# ANA MENÜ BUTONLARI
+# ANA MENÜ
 # ==================================================
 
 class AnaMenu(discord.ui.View):
@@ -591,10 +857,26 @@ class AnaMenu(discord.ui.View):
             timeout=600
         )
 
+    async def cevap_ver(self, interaction, cevap):
 
-    # ----------------------------------------------
-    # ALIŞVERİŞ
-    # ----------------------------------------------
+        try:
+
+            await interaction.response.send_message(
+                cevap,
+                ephemeral=True
+            )
+
+        except discord.InteractionResponded:
+
+            await interaction.followup.send(
+                cevap,
+                ephemeral=True
+            )
+
+
+    # ==================================================
+    # MEVCUT BUTONLAR
+    # ==================================================
 
     @discord.ui.button(
         label="Alışveriş",
@@ -602,25 +884,13 @@ class AnaMenu(discord.ui.View):
         emoji="🛒",
         row=0
     )
-    async def alisveris(
-        self,
-        interaction,
-        button
-    ):
+    async def alisveris(self, interaction, button):
 
-        await interaction.response.send_message(
-
-            sorular[
-                "nasıl alışveriş yapabilirim"
-            ],
-
-            ephemeral=True
+        await self.cevap_ver(
+            interaction,
+            sorular["nasıl alışveriş yapabilirim"]
         )
 
-
-    # ----------------------------------------------
-    # SİPARİŞ DURUMU
-    # ----------------------------------------------
 
     @discord.ui.button(
         label="Sipariş Durumu",
@@ -628,25 +898,15 @@ class AnaMenu(discord.ui.View):
         emoji="📦",
         row=0
     )
-    async def siparis_durumu(
-        self,
-        interaction,
-        button
-    ):
+    async def siparis_durumu(self, interaction, button):
 
-        await interaction.response.send_message(
-
+        await self.cevap_ver(
+            interaction,
             sorular[
                 "siparişimin durumunu nasıl öğrenebilirim"
-            ],
-
-            ephemeral=True
+            ]
         )
 
-
-    # ----------------------------------------------
-    # SİPARİŞ İPTALİ
-    # ----------------------------------------------
 
     @discord.ui.button(
         label="Sipariş İptali",
@@ -654,25 +914,15 @@ class AnaMenu(discord.ui.View):
         emoji="❌",
         row=0
     )
-    async def siparis_iptal(
-        self,
-        interaction,
-        button
-    ):
+    async def siparis_iptal(self, interaction, button):
 
-        await interaction.response.send_message(
-
+        await self.cevap_ver(
+            interaction,
             sorular[
                 "bir siparişi nasıl iptal edebilirim"
-            ],
-
-            ephemeral=True
+            ]
         )
 
-
-    # ----------------------------------------------
-    # HASARLI ÜRÜN
-    # ----------------------------------------------
 
     @discord.ui.button(
         label="Hasarlı Ürün",
@@ -680,51 +930,31 @@ class AnaMenu(discord.ui.View):
         emoji="⚠️",
         row=0
     )
-    async def hasarli(
-        self,
-        interaction,
-        button
-    ):
+    async def hasarli(self, interaction, button):
 
-        await interaction.response.send_message(
-
+        await self.cevap_ver(
+            interaction,
             sorular[
                 "siparişim hasarlı gelirse ne yapmalıyım"
-            ],
-
-            ephemeral=True
+            ]
         )
 
-
-    # ----------------------------------------------
-    # TEKNİK DESTEK
-    # ----------------------------------------------
 
     @discord.ui.button(
         label="Teknik Destek",
         style=discord.ButtonStyle.success,
         emoji="🔧",
-        row=0
+        row=1
     )
-    async def teknik_destek(
-        self,
-        interaction,
-        button
-    ):
+    async def teknik_destek(self, interaction, button):
 
-        await interaction.response.send_message(
-
+        await self.cevap_ver(
+            interaction,
             sorular[
                 "teknik destekle nasıl iletişime geçebilirim"
-            ],
-
-            ephemeral=True
+            ]
         )
 
-
-    # ----------------------------------------------
-    # TESLİMAT
-    # ----------------------------------------------
 
     @discord.ui.button(
         label="Teslimat",
@@ -732,25 +962,13 @@ class AnaMenu(discord.ui.View):
         emoji="🚚",
         row=1
     )
-    async def teslimat(
-        self,
-        interaction,
-        button
-    ):
+    async def teslimat(self, interaction, button):
 
-        await interaction.response.send_message(
-
-            sorular[
-                "ödeme sırasında teslimat yöntemini değiştirebilir miyim"
-            ],
-
-            ephemeral=True
+        await self.cevap_ver(
+            interaction,
+            sorular["teslimat ne kadar sürer"]
         )
 
-
-    # ----------------------------------------------
-    # İADE
-    # ----------------------------------------------
 
     @discord.ui.button(
         label="İade",
@@ -758,25 +976,13 @@ class AnaMenu(discord.ui.View):
         emoji="↩️",
         row=1
     )
-    async def iade(
-        self,
-        interaction,
-        button
-    ):
+    async def iade(self, interaction, button):
 
-        await interaction.response.send_message(
-
-            sorular[
-                "iade nasıl yapılır"
-            ],
-
-            ephemeral=True
+        await self.cevap_ver(
+            interaction,
+            sorular["iade nasıl yapılır"]
         )
 
-
-    # ----------------------------------------------
-    # GARANTİ
-    # ----------------------------------------------
 
     @discord.ui.button(
         label="Garanti",
@@ -784,77 +990,41 @@ class AnaMenu(discord.ui.View):
         emoji="🛡️",
         row=1
     )
-    async def garanti(
-        self,
-        interaction,
-        button
-    ):
+    async def garanti(self, interaction, button):
 
-        await interaction.response.send_message(
-
-            sorular[
-                "garanti süresi ne kadar"
-            ],
-
-            ephemeral=True
+        await self.cevap_ver(
+            interaction,
+            sorular["garanti süresi ne kadar"]
         )
 
-
-    # ----------------------------------------------
-    # ÖDEME
-    # ----------------------------------------------
 
     @discord.ui.button(
         label="Ödeme",
         style=discord.ButtonStyle.secondary,
         emoji="💳",
-        row=1
+        row=2
     )
-    async def odeme(
-        self,
-        interaction,
-        button
-    ):
+    async def odeme(self, interaction, button):
 
-        await interaction.response.send_message(
-
-            sorular[
-                "ödeme başarısız oldu"
-            ],
-
-            ephemeral=True
+        await self.cevap_ver(
+            interaction,
+            sorular["ödeme yöntemleri"]
         )
 
-
-    # ----------------------------------------------
-    # FATURA
-    # ----------------------------------------------
 
     @discord.ui.button(
         label="Fatura",
         style=discord.ButtonStyle.secondary,
         emoji="🧾",
-        row=1
+        row=2
     )
-    async def fatura(
-        self,
-        interaction,
-        button
-    ):
+    async def fatura(self, interaction, button):
 
-        await interaction.response.send_message(
-
-            sorular[
-                "fatura nasıl alınır"
-            ],
-
-            ephemeral=True
+        await self.cevap_ver(
+            interaction,
+            sorular["fatura nasıl alınır"]
         )
 
-
-    # ----------------------------------------------
-    # SORU GEÇMİŞİ
-    # ----------------------------------------------
 
     @discord.ui.button(
         label="Soru Geçmişim",
@@ -862,191 +1032,155 @@ class AnaMenu(discord.ui.View):
         emoji="📚",
         row=2
     )
-    async def gecmis(
-        self,
-        interaction,
-        button
-    ):
+    async def gecmis(self, interaction, button):
 
-        gecmis = kullanici_gecmisi(
-            interaction.user.id
-        )
+        try:
 
+            gecmis = kullanici_gecmisi(
+                interaction.user.id
+            )
 
-        if len(gecmis) == 0:
+        except Exception as hata:
+
+            print(
+                "GEÇMİŞ HATASI:",
+                hata
+            )
 
             await interaction.response.send_message(
-
-                "📭 Henüz kayıtlı bir soru geçmişin "
-                "bulunmuyor.",
-
+                "❌ Soru geçmişi alınamadı.",
                 ephemeral=True
             )
 
             return
 
+        if not gecmis:
+
+            await interaction.response.send_message(
+                "📭 Henüz kayıtlı bir soru geçmişin yok.",
+                ephemeral=True
+            )
+
+            return
 
         mesaj = "📚 **Son 5 Sorun**\n\n"
 
-        sayac = 1
+        for sayac, soru in enumerate(
+            gecmis[:5],
+            start=1
+        ):
 
-
-        for soru in gecmis:
+            if isinstance(soru, (tuple, list)):
+                metin = str(soru[0])
+            else:
+                metin = str(soru)
 
             mesaj += (
-
                 str(sayac)
                 + ". "
-                + soru[0]
+                + metin
                 + "\n"
             )
 
-            sayac += 1
-
-
         await interaction.response.send_message(
-
             mesaj,
-
             ephemeral=True
         )
 
-
-    # ----------------------------------------------
-    # İSTATİSTİK
-    # ----------------------------------------------
 
     @discord.ui.button(
         label="İstatistik",
         style=discord.ButtonStyle.primary,
         emoji="📊",
-        row=2
+        row=3
     )
-    async def istatistik(
-        self,
-        interaction,
-        button
-    ):
+    async def istatistik(self, interaction, button):
 
-        toplam = soru_sayisi()
-
-
-        mesaj = (
-
-            "📊 **Teknik Servis Botu İstatistikleri**\n\n"
-
-            "💬 Yazılı sorular: "
-            + str(yazili_soru_sayisi)
-            + "\n"
-
-            "🎤 Sesli sorular: "
-            + str(sesli_soru_sayisi)
-            + "\n"
-
-            "🤖 Yapay zekâ soruları: "
-            + str(ai_soru_sayisi)
-            + "\n"
-
-            "🗄️ Toplam kayıtlı soru: "
-            + str(toplam)
-        )
-
+        try:
+            toplam = soru_sayisi()
+        except Exception:
+            toplam = 0
 
         await interaction.response.send_message(
 
-            mesaj,
+            "📊 **TEKNİK SERVİS İSTATİSTİKLERİ**\n\n"
+            "💬 Yazılı sorular: "
+            + str(yazili_soru_sayisi)
+            + "\n"
+            "🎤 Sesli sorular: "
+            + str(sesli_soru_sayisi)
+            + "\n"
+            "🤖 AI soruları: "
+            + str(ai_soru_sayisi)
+            + "\n"
+            "🗄️ Toplam kayıt: "
+            + str(toplam),
 
             ephemeral=True
         )
 
 
-    # ----------------------------------------------
-    # YAPAY ZEKA
-    # ----------------------------------------------
-
     @discord.ui.button(
         label="Yapay Zekâ",
         style=discord.ButtonStyle.success,
         emoji="🤖",
-        row=2
+        row=3
     )
-    async def ai(
-        self,
-        interaction,
-        button
-    ):
+    async def ai(self, interaction, button):
 
         await interaction.response.send_modal(
             AIsoruModal()
         )
 
 
-    # ----------------------------------------------
-    # GERİ BİLDİRİM
-    # ----------------------------------------------
-
     @discord.ui.button(
         label="Geri Bildirim",
         style=discord.ButtonStyle.secondary,
         emoji="⭐",
-        row=3
+        row=4
     )
-    async def geri_bildirim(
-        self,
-        interaction,
-        button
-    ):
+    async def geri_bildirim(self, interaction, button):
 
         await interaction.response.send_modal(
             GeriBildirimModal()
         )
 
 
-    # ----------------------------------------------
-    # YÖNETİCİ
-    # ----------------------------------------------
-
     @discord.ui.button(
         label="Yönetici",
         style=discord.ButtonStyle.danger,
         emoji="🔐",
-        row=3
+        row=4
     )
-    async def yonetici_buton(
-        self,
-        interaction,
-        button
-    ):
+    async def yonetici_buton(self, interaction, button):
 
         if not interaction.user.guild_permissions.administrator:
 
             await interaction.response.send_message(
-
                 "❌ Bu bölümü yalnızca sunucu yöneticileri "
                 "kullanabilir.",
-
                 ephemeral=True
             )
 
             return
 
+        try:
+            toplam = soru_sayisi()
+        except Exception:
+            toplam = 0
 
         await interaction.response.send_message(
 
-            "🔐 **Yönetici Paneli**\n\n"
-
+            "🔐 **YÖNETİCİ PANELİ**\n\n"
             "📊 Toplam soru: "
-            + str(soru_sayisi())
+            + str(toplam)
             + "\n"
-
             "💬 Yazılı soru: "
             + str(yazili_soru_sayisi)
             + "\n"
-
             "🎤 Sesli soru: "
             + str(sesli_soru_sayisi)
             + "\n"
-
             "🤖 AI sorusu: "
             + str(ai_soru_sayisi),
 
@@ -1054,26 +1188,437 @@ class AnaMenu(discord.ui.View):
         )
 
 
-    # ----------------------------------------------
-    # ANA MENÜ
-    # ----------------------------------------------
+    @discord.ui.button(
+        label="Ana Menü",
+        style=discord.ButtonStyle.primary,
+        emoji="🏠",
+        row=4
+    )
+    async def ana_menu(self, interaction, button):
+
+        await interaction.response.edit_message(
+            content=BOT_ACIKLAMASI,
+            view=AnaMenu()
+        )
+
+
+    # ==================================================
+    # YENİ DESTEKLER MENÜSÜ
+    # ==================================================
+
+    @discord.ui.button(
+        label="Diğer Destekler",
+        style=discord.ButtonStyle.success,
+        emoji="🛠️",
+        row=4
+    )
+    async def diger_destekler(self, interaction, button):
+
+        await interaction.response.edit_message(
+            content=(
+                "🛠️ **DİĞER TEKNİK DESTEKLER - SAYFA 2**\n\n"
+                "İhtiyacınız olan teknik destek seçeneğini seçin."
+            ),
+            view=TeknikMenu2()
+        )
+
+
+# ==================================================
+# TEKNİK DESTEK SAYFA 2
+# ==================================================
+
+class TeknikMenu2(discord.ui.View):
+
+    def __init__(self):
+
+        super().__init__(
+            timeout=600
+        )
+
+    async def cevap_ver(self, interaction, cevap):
+
+        try:
+
+            await interaction.response.send_message(
+                cevap,
+                ephemeral=True
+            )
+
+        except discord.InteractionResponded:
+
+            await interaction.followup.send(
+                cevap,
+                ephemeral=True
+            )
+
+
+    @discord.ui.button(
+        label="Telefon",
+        style=discord.ButtonStyle.primary,
+        emoji="📱",
+        row=0
+    )
+    async def telefon_sorunlari(self, interaction, button):
+
+        await self.cevap_ver(
+            interaction,
+            yeni_cevaplar["telefon sorunları"]
+        )
+
+
+    @discord.ui.button(
+        label="Bilgisayar",
+        style=discord.ButtonStyle.primary,
+        emoji="💻",
+        row=0
+    )
+    async def bilgisayar_sorunlari(self, interaction, button):
+
+        await self.cevap_ver(
+            interaction,
+            yeni_cevaplar["bilgisayar sorunları"]
+        )
+
+
+    @discord.ui.button(
+        label="Wi-Fi",
+        style=discord.ButtonStyle.primary,
+        emoji="📡",
+        row=1
+    )
+    async def wifi_sorunlari(self, interaction, button):
+
+        await self.cevap_ver(
+            interaction,
+            yeni_cevaplar["wifi sorunları"]
+        )
+
+
+    @discord.ui.button(
+        label="Şarj",
+        style=discord.ButtonStyle.primary,
+        emoji="🔌",
+        row=1
+    )
+    async def sarj_sorunlari(self, interaction, button):
+
+        await self.cevap_ver(
+            interaction,
+            yeni_cevaplar["şarj sorunları"]
+        )
+
+
+    @discord.ui.button(
+        label="Pil",
+        style=discord.ButtonStyle.primary,
+        emoji="🔋",
+        row=2
+    )
+    async def pil_sorunlari(self, interaction, button):
+
+        await self.cevap_ver(
+            interaction,
+            yeni_cevaplar["pil batarya"]
+        )
+
+
+    @discord.ui.button(
+        label="Ekran",
+        style=discord.ButtonStyle.secondary,
+        emoji="🖥️",
+        row=2
+    )
+    async def ekran_sorunlari(self, interaction, button):
+
+        await self.cevap_ver(
+            interaction,
+            yeni_cevaplar["ekran sorunları"]
+        )
+
+
+    @discord.ui.button(
+        label="Klavye",
+        style=discord.ButtonStyle.secondary,
+        emoji="⌨️",
+        row=3
+    )
+    async def klavye_sorunlari(self, interaction, button):
+
+        await self.cevap_ver(
+            interaction,
+            yeni_cevaplar["klavye sorunları"]
+        )
+
+
+    @discord.ui.button(
+        label="Mouse",
+        style=discord.ButtonStyle.secondary,
+        emoji="🖱️",
+        row=3
+    )
+    async def mouse_sorunlari(self, interaction, button):
+
+        await self.cevap_ver(
+            interaction,
+            yeni_cevaplar["mouse sorunları"]
+        )
+
+
+    @discord.ui.button(
+        label="Yazıcı",
+        style=discord.ButtonStyle.secondary,
+        emoji="🖨️",
+        row=4
+    )
+    async def yazici_sorunlari(self, interaction, button):
+
+        await self.cevap_ver(
+            interaction,
+            yeni_cevaplar["yazıcı sorunları"]
+        )
+
+
+    @discord.ui.button(
+        label="Depolama",
+        style=discord.ButtonStyle.secondary,
+        emoji="💾",
+        row=4
+    )
+    async def depolama_sorunlari(self, interaction, button):
+
+        await self.cevap_ver(
+            interaction,
+            yeni_cevaplar["depolama sorunları"]
+        )
+
+
+    @discord.ui.button(
+        label="Sonraki Sayfa",
+        style=discord.ButtonStyle.success,
+        emoji="➡️",
+        row=4
+    )
+    async def sonraki_sayfa(self, interaction, button):
+
+        await interaction.response.edit_message(
+            content=(
+                "🛠️ **DİĞER TEKNİK DESTEKLER - SAYFA 3**\n\n"
+                "Daha fazla teknik destek seçeneği."
+            ),
+            view=TeknikMenu3()
+        )
+
 
     @discord.ui.button(
         label="Ana Menü",
         style=discord.ButtonStyle.primary,
         emoji="🏠",
-        row=3
+        row=4
     )
-    async def ana_menu(
-        self,
-        interaction,
-        button
-    ):
+    async def ana_menu(self, interaction, button):
 
         await interaction.response.edit_message(
-
             content=BOT_ACIKLAMASI,
+            view=AnaMenu()
+        )
 
+
+# ==================================================
+# TEKNİK DESTEK SAYFA 3
+# ==================================================
+
+class TeknikMenu3(discord.ui.View):
+
+    def __init__(self):
+
+        super().__init__(
+            timeout=600
+        )
+
+    async def cevap_ver(self, interaction, cevap):
+
+        try:
+
+            await interaction.response.send_message(
+                cevap,
+                ephemeral=True
+            )
+
+        except discord.InteractionResponded:
+
+            await interaction.followup.send(
+                cevap,
+                ephemeral=True
+            )
+
+
+    @discord.ui.button(
+        label="Ses",
+        style=discord.ButtonStyle.secondary,
+        emoji="🔊",
+        row=0
+    )
+    async def ses_sorunlari(self, interaction, button):
+
+        await self.cevap_ver(
+            interaction,
+            yeni_cevaplar["ses sorunları"]
+        )
+
+
+    @discord.ui.button(
+        label="Kamera",
+        style=discord.ButtonStyle.secondary,
+        emoji="📷",
+        row=0
+    )
+    async def kamera_sorunlari(self, interaction, button):
+
+        await self.cevap_ver(
+            interaction,
+            yeni_cevaplar["kamera sorunları"]
+        )
+
+
+    @discord.ui.button(
+        label="Bluetooth",
+        style=discord.ButtonStyle.secondary,
+        emoji="📶",
+        row=1
+    )
+    async def bluetooth_sorunlari(self, interaction, button):
+
+        await self.cevap_ver(
+            interaction,
+            yeni_cevaplar["bluetooth sorunları"]
+        )
+
+
+    @discord.ui.button(
+        label="Güncelleme",
+        style=discord.ButtonStyle.secondary,
+        emoji="🔄",
+        row=1
+    )
+    async def guncelleme_sorunlari(self, interaction, button):
+
+        await self.cevap_ver(
+            interaction,
+            yeni_cevaplar["güncelleme sorunları"]
+        )
+
+
+    @discord.ui.button(
+        label="Güvenlik",
+        style=discord.ButtonStyle.danger,
+        emoji="🛡️",
+        row=2
+    )
+    async def guvenlik_sorunlari(self, interaction, button):
+
+        await self.cevap_ver(
+            interaction,
+            yeni_cevaplar["güvenlik sorunları"]
+        )
+
+
+    @discord.ui.button(
+        label="Hesap Güvenliği",
+        style=discord.ButtonStyle.danger,
+        emoji="🔐",
+        row=2
+    )
+    async def hesap_guvenligi(self, interaction, button):
+
+        await self.cevap_ver(
+            interaction,
+            yeni_cevaplar["hesap güvenliği"]
+        )
+
+
+    @discord.ui.button(
+        label="Teslim Alma",
+        style=discord.ButtonStyle.primary,
+        emoji="📦",
+        row=3
+    )
+    async def teslim_alma(self, interaction, button):
+
+        await self.cevap_ver(
+            interaction,
+            yeni_cevaplar["teslim alma"]
+        )
+
+
+    @discord.ui.button(
+        label="Fatura Sorunu",
+        style=discord.ButtonStyle.primary,
+        emoji="🧾",
+        row=3
+    )
+    async def fatura_sorunu(self, interaction, button):
+
+        await self.cevap_ver(
+            interaction,
+            yeni_cevaplar["fatura sorunları"]
+        )
+
+
+    @discord.ui.button(
+        label="Ödeme Sorunu",
+        style=discord.ButtonStyle.danger,
+        emoji="💳",
+        row=4
+    )
+    async def odeme_sorunu(self, interaction, button):
+
+        await self.cevap_ver(
+            interaction,
+            yeni_cevaplar["ödeme sorunları"]
+        )
+
+
+    @discord.ui.button(
+        label="Müşteri Hiz.",
+        style=discord.ButtonStyle.success,
+        emoji="📞",
+        row=4
+    )
+    async def musteri_hizmetleri(self, interaction, button):
+
+        await self.cevap_ver(
+            interaction,
+            yeni_cevaplar["müşteri hizmetleri"]
+        )
+
+
+    @discord.ui.button(
+        label="Önceki Sayfa",
+        style=discord.ButtonStyle.primary,
+        emoji="⬅️",
+        row=4
+    )
+    async def onceki_sayfa(self, interaction, button):
+
+        await interaction.response.edit_message(
+            content=(
+                "🛠️ **DİĞER TEKNİK DESTEKLER - SAYFA 2**\n\n"
+                "İhtiyacınız olan teknik destek seçeneğini seçin."
+            ),
+            view=TeknikMenu2()
+        )
+
+
+    @discord.ui.button(
+        label="Ana Menü",
+        style=discord.ButtonStyle.primary,
+        emoji="🏠",
+        row=4
+    )
+    async def ana_menu(self, interaction, button):
+
+        await interaction.response.edit_message(
+            content=BOT_ACIKLAMASI,
             view=AnaMenu()
         )
 
@@ -1088,7 +1633,42 @@ async def on_ready():
     print("--------------------------------")
     print("TEKNİK SERVİS BOTU ÇALIŞIYOR!")
     print("Bot:", bot.user)
-    print("Toplam soru:", soru_sayisi())
+    print("Yerel AI:", YEREL_AI_MODEL)
+
+    try:
+
+        ai_durumu = await ollama_kontrol()
+
+        if ai_durumu:
+
+            print("Ollama: BAĞLI")
+            print("Model: HAZIR")
+
+        else:
+
+            print("Ollama: BAĞLANAMADI / MODEL YOK")
+
+    except Exception as hata:
+
+        print(
+            "Ollama kontrolünde hata:",
+            hata
+        )
+
+    try:
+
+        print(
+            "Toplam soru:",
+            soru_sayisi()
+        )
+
+    except Exception as hata:
+
+        print(
+            "Veritabanı okunamadı:",
+            hata
+        )
+
     print("--------------------------------")
 
 
@@ -1100,231 +1680,71 @@ async def on_ready():
 async def on_message(message):
 
     global yazili_soru_sayisi
-    global sesli_soru_sayisi
 
-
-    if message.author == bot.user:
-
+    if message.author.bot:
         return
 
+    if message.content.startswith(PREFIX):
 
-    await bot.process_commands(
-        message
-    )
-
-
-    # Komutları normal soru olarak işleme
-
-    if message.content.startswith(
-        PREFIX
-    ):
+        await bot.process_commands(
+            message
+        )
 
         return
-
-
-    # ==================================================
-    # SESLİ MESAJ
-    # ==================================================
-
-    if len(message.attachments) > 0:
-
-        for dosya in message.attachments:
-
-            try:
-
-                sesli_mi = dosya.is_voice_message()
-
-            except Exception:
-
-                sesli_mi = False
-
-
-            if sesli_mi:
-
-                dosya_adi = ""
-
-
-                try:
-
-                    await message.channel.send(
-
-                        "🎤 Sesli mesajını yazıya "
-                        "çeviriyorum..."
-                    )
-
-
-                    dosya_adi = (
-
-                        "gecici_ses_"
-
-                        + str(message.author.id)
-
-                        + "_"
-
-                        + str(int(time.time()))
-
-                        + ".ogg"
-                    )
-
-
-                    await dosya.save(
-                        dosya_adi
-                    )
-
-
-                    soru = sesli_mesaji_yaziya_cevir(
-                        dosya_adi
-                    )
-
-
-                    sesli_soru_sayisi += 1
-
-
-                    cevap = hazir_cevap_bul(
-                        soru
-                    )
-
-
-                    if cevap is None:
-
-                        try:
-
-                            cevap = yapay_zeka_cevabi(
-                                soru
-                            )
-
-                        except Exception as hata:
-
-                            print(
-                                "OPENAI HATASI:",
-                                hata
-                            )
-
-                            cevap = (
-                                "❌ Sorunuzu algıladım fakat "
-                                "şu anda yapay zekâ servisine "
-                                "ulaşamıyorum."
-                            )
-
-
-                    soru_kaydet(
-
-                        message.author.id,
-
-                        str(message.author),
-
-                        soru,
-
-                        cevap
-                    )
-
-
-                    await message.channel.send(
-
-                        "📝 **Algılanan soru:**\n"
-                        + soru
-                        + "\n\n"
-                        + "🤖 **Cevap:**\n"
-                        + cevap
-                    )
-
-
-                except Exception as hata:
-
-                    print(
-                        "SES HATASI:",
-                        hata
-                    )
-
-
-                    await message.channel.send(
-
-                        "❌ Sesli mesajı işleyemedim.\n"
-                        "Lütfen tekrar deneyin."
-                    )
-
-
-                finally:
-
-                    if dosya_adi != "":
-
-                        if os.path.exists(
-                            dosya_adi
-                        ):
-
-                            os.remove(
-                                dosya_adi
-                            )
-
-
-                return
-
-
-    # ==================================================
-    # YAZILI MESAJ
-    # ==================================================
 
     soru = message.content.strip()
 
-
-    if soru == "":
-
+    if not soru:
         return
 
-
     yazili_soru_sayisi += 1
-
 
     cevap = hazir_cevap_bul(
         soru
     )
 
-
     if cevap is None:
 
-        try:
-
-            cevap = yapay_zeka_cevabi(
-                soru
-            )
-
-        except Exception as hata:
-
-            print(
-                "OPENAI HATASI:",
-                hata
-            )
-
-            cevap = (
-                "❌ Üzgünüm, şu anda yapay zekâ "
-                "servisine ulaşamıyorum."
-            )
-
+        cevap = await yapay_zeka_cevabi(
+            soru
+        )
 
     try:
 
         soru_kaydet(
-
             message.author.id,
-
             str(message.author),
-
             soru,
-
             cevap
         )
 
     except Exception as hata:
 
         print(
-            "VERİTABANI HATASI:",
+            "⚠️ VERİTABANI HATASI:",
             hata
         )
 
+    try:
 
-    await message.channel.send(
-        cevap
-    )
+        await mesaj_gonder(
+            message.channel,
+            cevap
+        )
+
+    except discord.Forbidden:
+
+        print(
+            "❌ Mesaj gönderme izni yok:",
+            message.channel
+        )
+
+    except Exception as hata:
+
+        print(
+            "❌ MESAJ GÖNDERME HATASI:",
+            hata
+        )
 
 
 # ==================================================
@@ -1335,9 +1755,7 @@ async def on_message(message):
 async def hello(ctx):
 
     await ctx.send(
-
         BOT_ACIKLAMASI,
-
         view=AnaMenu()
     )
 
@@ -1351,271 +1769,279 @@ async def yardim(ctx):
 
     await ctx.send(
 
-        "🛠️ **Teknik Servis Yardım Merkezi**\n\n"
-
-        "Aşağıdaki butonlardan yardım almak "
-        "istediğiniz konuyu seçebilirsiniz.\n\n"
-
-        "💬 Yazılı soru göndererek de doğrudan "
-        "botla konuşabilirsiniz.\n"
-
-        "🎤 Sesli mesaj göndererek sorunuzu "
-        "anlatabilirsiniz.\n\n"
-
-        "🤖 Hazır cevap bulunamazsa yapay zekâ "
-        "devreye girer.\n\n"
-
-        "⭐ Hizmet hakkında geri bildirim "
-        "bırakabilirsiniz.",
+        "🛠️ **YARDIM MERKEZİ**\n\n"
+        "💬 Sorunu doğrudan yazabilirsin.\n"
+        "🤖 Yerel AI'ya soru sorabilirsin.\n"
+        "📚 Son sorularını görebilirsin.\n"
+        "⭐ Geri bildirim bırakabilirsin.\n\n"
+        "Menüyü açmak için aşağıdaki butonları "
+        "kullanabilirsin.",
 
         view=AnaMenu()
     )
 
 
 # ==================================================
-# !SİPARİŞ
+# MEVCUT KOMUTLAR
 # ==================================================
 
 @bot.command()
 async def siparis(ctx):
 
     await ctx.send(
-
         sorular[
             "siparişimin durumunu nasıl öğrenebilirim"
         ]
     )
 
 
-# ==================================================
-# !İPTAL
-# ==================================================
-
 @bot.command()
 async def iptal(ctx):
 
     await ctx.send(
-
         sorular[
             "bir siparişi nasıl iptal edebilirim"
         ]
     )
 
 
-# ==================================================
-# !HASAR
-# ==================================================
-
 @bot.command()
 async def hasar(ctx):
 
     await ctx.send(
-
         sorular[
             "siparişim hasarlı gelirse ne yapmalıyım"
         ]
     )
 
 
-# ==================================================
-# !TEKNİKDESTEK
-# ==================================================
-
 @bot.command()
 async def teknikdestek(ctx):
 
     await ctx.send(
-
-        sorular[
-            "teknik destekle nasıl iletişime geçebilirim"
-        ]
+        "🔧 **TEKNİK DESTEK**\n\n"
+        "📞 Telefon: "
+        + TEKNIK_SERVIS_NUMARASI
+        + "\n\n"
+        "🌐 Web sitesi:\n"
+        + TEKNIK_SERVIS_SITESI
     )
 
-
-# ==================================================
-# !TESLİMAT
-# ==================================================
 
 @bot.command()
 async def teslimat(ctx):
 
     await ctx.send(
-
-        sorular[
-            "ödeme sırasında teslimat yöntemini değiştirebilir miyim"
-        ]
+        sorular["teslimat ne kadar sürer"]
     )
 
-
-# ==================================================
-# !İSTATİSTİK
-# ==================================================
 
 @bot.command()
 async def istatistik(ctx):
 
-    toplam = soru_sayisi()
-
+    try:
+        toplam = soru_sayisi()
+    except Exception:
+        toplam = 0
 
     await ctx.send(
 
-        "📊 **Teknik Servis Botu İstatistikleri**\n\n"
-
+        "📊 **TEKNİK SERVİS İSTATİSTİKLERİ**\n\n"
         "💬 Yazılı sorular: "
         + str(yazili_soru_sayisi)
         + "\n"
-
         "🎤 Sesli sorular: "
         + str(sesli_soru_sayisi)
         + "\n"
-
-        "🤖 Yapay zekâ soruları: "
+        "🤖 AI soruları: "
         + str(ai_soru_sayisi)
         + "\n"
-
-        "🗄️ Veritabanındaki toplam soru: "
+        "🗄️ Toplam kayıt: "
         + str(toplam)
     )
 
 
-# ==================================================
-# !GEÇMİŞ
-# ==================================================
-
 @bot.command()
 async def gecmis(ctx):
 
-    gecmis = kullanici_gecmisi(
-        ctx.author.id
-    )
-
-
-    if len(gecmis) == 0:
-
-        await ctx.send(
-
-            "📭 Henüz kayıtlı bir soru geçmişin "
-            "bulunmuyor."
-        )
-
-        return
-
-
-    mesaj = "📚 **Son 5 Sorun**\n\n"
-
-    sayac = 1
-
-
-    for soru in gecmis:
-
-        mesaj += (
-
-            str(sayac)
-            + ". "
-            + soru[0]
-            + "\n"
-        )
-
-        sayac += 1
-
-
-    await ctx.send(
-        mesaj
-    )
-
-
-# ==================================================
-# !AI
-# ==================================================
-
-@bot.command()
-async def ai(ctx, *, soru=None):
-
-    if soru is None:
-
-        await ctx.send(
-
-            "🤖 Bir soru yazmalısın.\n\n"
-
-            "Örnek:\n"
-
-            "`!ai Bilgisayarım neden açılmıyor?`"
-        )
-
-        return
-
-
     try:
 
-        cevap = yapay_zeka_cevabi(
-            soru
+        gecmis = kullanici_gecmisi(
+            ctx.author.id
         )
-
-
-        soru_kaydet(
-
-            ctx.author.id,
-
-            str(ctx.author),
-
-            soru,
-
-            cevap
-        )
-
-
-        await ctx.send(
-            cevap
-        )
-
 
     except Exception as hata:
 
         print(
-            "OPENAI HATASI:",
+            "GEÇMİŞ HATASI:",
             hata
         )
 
+        await ctx.send(
+            "❌ Soru geçmişi alınamadı."
+        )
+
+        return
+
+    if not gecmis:
+
+        await ctx.send(
+            "📭 Henüz kayıtlı bir soru geçmişin yok."
+        )
+
+        return
+
+    mesaj = "📚 **SON 5 SORUN**\n\n"
+
+    for sayac, soru in enumerate(
+        gecmis[:5],
+        start=1
+    ):
+
+        if isinstance(soru, (tuple, list)):
+            metin = str(soru[0])
+        else:
+            metin = str(soru)
+
+        mesaj += (
+            str(sayac)
+            + ". "
+            + metin
+            + "\n"
+        )
+
+    await mesaj_gonder(
+        ctx.channel,
+        mesaj
+    )
+
+
+@bot.command()
+async def ai(ctx, *, soru=None):
+
+    if soru is None or not soru.strip():
 
         await ctx.send(
 
-            "❌ OpenAI servisine şu anda "
-            "ulaşılamıyor."
+            "🤖 Bir soru yazmalısın.\n\n"
+            "Örnek:\n"
+            f"`{PREFIX}ai Bilgisayarım neden açılmıyor?`"
         )
 
+        return
 
-# ==================================================
-# !DESTEK
-# ==================================================
+    try:
+
+        async with ctx.typing():
+
+            cevap = await yapay_zeka_cevabi(
+                soru
+            )
+
+        try:
+
+            soru_kaydet(
+                ctx.author.id,
+                str(ctx.author),
+                soru,
+                cevap
+            )
+
+        except Exception as hata:
+
+            print(
+                "VERİTABANI HATASI:",
+                hata
+            )
+
+        await mesaj_gonder(
+            ctx.channel,
+            cevap
+        )
+
+    except Exception as hata:
+
+        print(
+            "❌ YEREL AI HATASI:",
+            hata
+        )
+
+        await ctx.send(
+            "❌ Yerel AI çalıştırılamadı."
+        )
+
 
 @bot.command()
 async def destek(ctx):
 
     await ctx.send(
 
-        "🎫 **Teknik Servis Destek Merkezi**\n\n"
-
-        "Sorununuzu buraya yazabilirsiniz.\n\n"
-
-        "🎤 Sesli mesaj göndererek de "
-        "sorununuzu anlatabilirsiniz.\n\n"
-
-        "🤖 Bot mesajınızı analiz eder ve "
-        "uygun bir cevap vermeye çalışır.\n\n"
-
-        "⭐ Hizmet hakkında geri bildirim "
-        "bırakabilirsiniz.\n\n"
-
-        "Aşağıdaki menüyü kullanarak da "
-        "destek konunuzu seçebilirsiniz.",
+        "🎫 **TEKNİK SERVİS DESTEK MERKEZİ**\n\n"
+        "Sorunuzu buraya yazabilirsiniz.\n\n"
+        "🤖 Hazır cevap bulunamazsa yerel AI yardımcı olur.\n"
+        "📞 Teknik destek: "
+        + TEKNIK_SERVIS_NUMARASI
+        + "\n\n"
+        "Aşağıdaki menüyü kullanabilirsiniz.",
 
         view=AnaMenu()
     )
 
 
-# ==================================================
-# !YÖNETİCİ
-# ==================================================
+@bot.command()
+async def telefon(ctx):
+
+    await ctx.send(
+
+        "📞 **TEKNİK SERVİS TELEFON NUMARASI**\n\n"
+        + TEKNIK_SERVIS_NUMARASI
+        + "\n\n"
+        "⚠️ Bu kodda kullanılan numara örnektir."
+    )
+
+
+@bot.command()
+async def site(ctx):
+
+    await ctx.send(
+
+        "🌐 **TEKNİK SERVİS WEB SİTESİ**\n\n"
+        + TEKNIK_SERVIS_SITESI
+    )
+
+
+@bot.command()
+async def hakkinda(ctx):
+
+    await ctx.send(
+
+        "🛠️ **TEKNİK SERVİS ASİSTANI**\n\n"
+        "📚 Hazır cevap sistemi\n"
+        "🤖 Yerel yapay zekâ\n"
+        "🗄️ Veritabanı sistemi\n"
+        "📊 İstatistik sistemi\n"
+        "⭐ Geri bildirim sistemi\n"
+        "🔐 Yönetici sistemi\n"
+        "🌐 Web sitesi bağlantısı\n"
+        "📞 Teknik destek telefonu"
+    )
+
+
+@bot.command()
+async def ping(ctx):
+
+    gecikme = round(
+        bot.latency * 1000
+    )
+
+    await ctx.send(
+
+        "🏓 **Pong!**\n\n"
+        "📡 Bot gecikmesi: "
+        + str(gecikme)
+        + " ms"
+    )
+
 
 @bot.command()
 @commands.has_permissions(
@@ -1623,36 +2049,198 @@ async def destek(ctx):
 )
 async def yonetici(ctx):
 
+    try:
+        toplam = soru_sayisi()
+    except Exception:
+        toplam = 0
+
     await ctx.send(
 
-        "🔐 **Yönetici Paneli**\n\n"
-
+        "🔐 **YÖNETİCİ PANELİ**\n\n"
         "📊 Toplam soru: "
-        + str(soru_sayisi())
+        + str(toplam)
         + "\n"
-
         "💬 Yazılı soru: "
         + str(yazili_soru_sayisi)
         + "\n"
-
         "🎤 Sesli soru: "
         + str(sesli_soru_sayisi)
         + "\n"
-
         "🤖 AI sorusu: "
         + str(ai_soru_sayisi)
     )
 
 
 # ==================================================
-# YÖNETİCİ KOMUT HATASI
+# YENİ 20 KOMUT
+# ==================================================
+
+@bot.command()
+async def telefonsorun(ctx):
+
+    await ctx.send(
+        yeni_cevaplar["telefon sorunları"]
+    )
+
+
+@bot.command()
+async def bilgisayarsorun(ctx):
+
+    await ctx.send(
+        yeni_cevaplar["bilgisayar sorunları"]
+    )
+
+
+@bot.command()
+async def wifisorun(ctx):
+
+    await ctx.send(
+        yeni_cevaplar["wifi sorunları"]
+    )
+
+
+@bot.command()
+async def sarj(ctx):
+
+    await ctx.send(
+        yeni_cevaplar["şarj sorunları"]
+    )
+
+
+@bot.command()
+async def pil(ctx):
+
+    await ctx.send(
+        yeni_cevaplar["pil batarya"]
+    )
+
+
+@bot.command()
+async def ekransorun(ctx):
+
+    await ctx.send(
+        yeni_cevaplar["ekran sorunları"]
+    )
+
+
+@bot.command()
+async def klavyesorun(ctx):
+
+    await ctx.send(
+        yeni_cevaplar["klavye sorunları"]
+    )
+
+
+@bot.command()
+async def mousesorun(ctx):
+
+    await ctx.send(
+        yeni_cevaplar["mouse sorunları"]
+    )
+
+
+@bot.command()
+async def yazicisorun(ctx):
+
+    await ctx.send(
+        yeni_cevaplar["yazıcı sorunları"]
+    )
+
+
+@bot.command()
+async def depolamasorun(ctx):
+
+    await ctx.send(
+        yeni_cevaplar["depolama sorunları"]
+    )
+
+
+@bot.command()
+async def ses(ctx):
+
+    await ctx.send(
+        yeni_cevaplar["ses sorunları"]
+    )
+
+
+@bot.command()
+async def kamera(ctx):
+
+    await ctx.send(
+        yeni_cevaplar["kamera sorunları"]
+    )
+
+
+@bot.command()
+async def bluetooth(ctx):
+
+    await ctx.send(
+        yeni_cevaplar["bluetooth sorunları"]
+    )
+
+
+@bot.command()
+async def guncelleme(ctx):
+
+    await ctx.send(
+        yeni_cevaplar["güncelleme sorunları"]
+    )
+
+
+@bot.command()
+async def guvenlik(ctx):
+
+    await ctx.send(
+        yeni_cevaplar["güvenlik sorunları"]
+    )
+
+
+@bot.command()
+async def hesapguvenligi(ctx):
+
+    await ctx.send(
+        yeni_cevaplar["hesap güvenliği"]
+    )
+
+
+@bot.command()
+async def teslimalma(ctx):
+
+    await ctx.send(
+        yeni_cevaplar["teslim alma"]
+    )
+
+
+@bot.command()
+async def faturasorun(ctx):
+
+    await ctx.send(
+        yeni_cevaplar["fatura sorunları"]
+    )
+
+
+@bot.command()
+async def odemes(ctx):
+
+    await ctx.send(
+        yeni_cevaplar["ödeme sorunları"]
+    )
+
+
+@bot.command()
+async def musterihizmetleri(ctx):
+
+    await ctx.send(
+        yeni_cevaplar["müşteri hizmetleri"]
+    )
+
+
+# ==================================================
+# YÖNETİCİ HATA
 # ==================================================
 
 @yonetici.error
-async def yonetici_hata(
-    ctx,
-    hata
-):
+async def yonetici_hata(ctx, hata):
 
     if isinstance(
         hata,
@@ -1660,10 +2248,16 @@ async def yonetici_hata(
     ):
 
         await ctx.send(
-
             "❌ Bu komutu kullanmak için "
             "sunucu yöneticisi olmalısın."
         )
+
+        return
+
+    print(
+        "YÖNETİCİ KOMUT HATASI:",
+        hata
+    )
 
 
 # ==================================================
@@ -1671,10 +2265,10 @@ async def yonetici_hata(
 # ==================================================
 
 @bot.event
-async def on_command_error(
-    ctx,
-    hata
-):
+async def on_command_error(ctx, hata):
+
+    if hasattr(ctx.command, "on_error"):
+        return
 
     if isinstance(
         hata,
@@ -1682,13 +2276,11 @@ async def on_command_error(
     ):
 
         await ctx.send(
-
             "❓ Böyle bir komut bulunamadı.\n"
-            "`!hello` yazarak buton menüsünü açabilirsin."
+            f"`{PREFIX}hello` yazarak menüyü açabilirsin."
         )
 
         return
-
 
     if isinstance(
         hata,
@@ -1696,12 +2288,10 @@ async def on_command_error(
     ):
 
         await ctx.send(
-
             "❌ Komutu eksik kullandın."
         )
 
         return
-
 
     if isinstance(
         hata,
@@ -1709,16 +2299,38 @@ async def on_command_error(
     ):
 
         await ctx.send(
-
             "❌ Bu komutu kullanmak için "
             "gerekli yetkiye sahip değilsin."
         )
 
         return
 
+    if isinstance(
+        hata,
+        commands.BotMissingPermissions
+    ):
+
+        await ctx.send(
+            "❌ Botun bu işlem için gerekli Discord "
+            "yetkileri yok."
+        )
+
+        return
+
+    if isinstance(
+        hata,
+        commands.CommandOnCooldown
+    ):
+
+        await ctx.send(
+            "⏳ Bu komutu tekrar kullanmadan önce "
+            f"{hata.retry_after:.1f} saniye beklemelisin."
+        )
+
+        return
 
     print(
-        "KOMUT HATASI:",
+        "❌ KOMUT HATASI:",
         hata
     )
 
@@ -1727,17 +2339,31 @@ async def on_command_error(
 # VERİTABANI
 # ==================================================
 
-veritabani_olustur()
+try:
+
+    veritabani_olustur()
+
+    print(
+        "🗄️ Veritabanı hazır."
+    )
+
+except Exception as hata:
+
+    print(
+        "❌ VERİTABANI BAŞLATMA HATASI:",
+        hata
+    )
 
 
 # ==================================================
 # TOKEN KONTROLÜ
 # ==================================================
 
-if DISCORD_TOKEN == "":
+if not DISCORD_TOKEN:
 
     print(
-        "HATA: config.py dosyasına Discord tokeni eklenmemiş."
+        "❌ HATA: config.py dosyasına Discord tokeni "
+        "eklenmemiş."
     )
 
 else:
@@ -1746,8 +2372,43 @@ else:
         "Discord botuna bağlanılıyor..."
     )
 
-# Botu Discord'a bağlıyoruz
-    bot.run("TOKEN")
+    try:
+
+        bot.run(
+            DISCORD_TOKEN
+        )
+
+    except discord.LoginFailure:
+
+        print(
+            "❌ Discord token geçersiz."
+        )
+
+        print(
+            "Discord Developer Portal'dan bot tokenini "
+            "yenileyip config.py içine doğru şekilde ekleyin."
+        )
+
+    except discord.PrivilegedIntentsRequired:
+
+        print(
+            "❌ Gerekli Privileged Intent izinleri açık değil."
+        )
+
+        print(
+            "Discord Developer Portal > Bot > "
+            "Privileged Gateway Intents bölümünü kontrol edin."
+        )
+
+    except Exception as hata:
+
+        print(
+            "❌ BOT BAŞLATMA HATASI:",
+            hata
+        )
+
+# Discord botunu başlat.
+bot.run("TOKEN")
 
 
         
@@ -1757,7 +2418,6 @@ else:
 
    
         
-
 
 
 
