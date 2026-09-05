@@ -14,6 +14,7 @@ Merhaba.Ben Harun KARASU.Bu projeyi yakın arkadaşım Rüzgar Nihat YEŞİLYURT
 7-Bot komutlerı 3 bölümden oluşmaktadır(Diğer Destekler butonu ile sayfalar görüntülenebilir).
 8-Botumuz toplamda 3428 satırdan oluşmaktadır.
 ///
+NOT:Botumuzdaki numara sahtedir ve site linki güvenlidir.
 ///
 Botumuz bitmiştir.Sunumumuz 18 Eylül saat 18:30'da Kodland Python Level 3 seviyesindeki mezuniyet dersimizde yapacağız.Arkadaşlarımın hepsine başarılar dilerim...
   
